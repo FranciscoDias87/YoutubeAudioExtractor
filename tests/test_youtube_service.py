@@ -9,6 +9,20 @@ def test_normalize_quality_adds_k_suffix():
     assert YouTubeService._normalize_quality("320K") == "320K"
 
 
+def test_aac_uses_adts_and_aac_codec():
+    options = YouTubeService._postprocessor_options("aac", "128K")
+
+    assert options["preferredcodec"] == "aac"
+    assert options["postprocessor_args"] == ["-c:a", "aac", "-f", "adts"]
+
+
+def test_m4a_does_not_use_aac_adts_override():
+    options = YouTubeService._postprocessor_options("m4a", "128K")
+
+    assert options["preferredcodec"] == "m4a"
+    assert "postprocessor_args" not in options
+
+
 def test_invalid_url_is_rejected(tmp_path):
     service = YouTubeService(str(tmp_path))
     result = service.extract_audio("")
