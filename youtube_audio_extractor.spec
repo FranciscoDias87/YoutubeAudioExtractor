@@ -2,16 +2,11 @@
 
 block_cipher = None
 
-# Definir dados adicionais que precisam ser incluídos
-added_files = [
-    # Incluir arquivos de configuração se necessário
-    # ('caminho/origem', 'caminho/destino')
-]
+added_files = []
 
-# Definir módulos ocultos que o PyInstaller pode não detectar automaticamente
 hidden_imports = [
     'PyQt5.QtCore',
-    'PyQt5.QtWidgets', 
+    'PyQt5.QtWidgets',
     'PyQt5.QtGui',
     'yt_dlp',
     'yt_dlp.extractor',
@@ -27,6 +22,9 @@ hidden_imports = [
     'mutagen',
     'pycryptodomex',
     'file_manager',
+    'app',
+    'app.services',
+    'app.services.youtube_service',
     'integrated_audio_extractor_playlist',
     'main_menu',
     'single_video_window',
@@ -38,15 +36,14 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-      *added_files,
-      ('icons/*', 'icons')
+        *added_files,
+        ('icons/*', 'icons')
     ],
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],    
+    runtime_hooks=[],
     excludes=[
-        # Excluir módulos desnecessários para reduzir tamanho
         'tkinter',
         'matplotlib',
         'numpy',
@@ -80,16 +77,15 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,  # False para aplicação GUI (sem console)
+    console=False,
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # Adicionar caminho para ícone se disponível: icon='icon.ico'
-    version_file=None,  # Adicionar arquivo de versão se necessário
+    icon=None,
+    version_file=None,
 )
 
-# Configurações específicas para Windows
 if hasattr(exe, 'manifest'):
     exe.manifest = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
@@ -120,4 +116,3 @@ if hasattr(exe, 'manifest'):
     </security>
   </trustInfo>
 </assembly>"""
-
