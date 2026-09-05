@@ -8,6 +8,7 @@ class FileManager:
     """Gerencia diretórios e nomes dos arquivos de áudio."""
 
     DEFAULT_DIRECTORY_NAME = "Audio"
+    LEGACY_DIRECTORY_NAME = "Audios"
 
     def __init__(self, base_directory=None):
         """
@@ -17,12 +18,23 @@ class FileManager:
             base_directory (str): Diretório base para salvar os arquivos.
                                  Se None, usa ~/Audio.
         """
+        home_directory = os.path.expanduser("~")
+        default_directory = os.path.join(home_directory, self.DEFAULT_DIRECTORY_NAME)
+
         if base_directory is None:
-            self.base_directory = os.path.join(
-                os.path.expanduser("~"), self.DEFAULT_DIRECTORY_NAME
-            )
+            self.base_directory = default_directory
         else:
-            self.base_directory = os.path.abspath(os.path.expanduser(base_directory))
+            requested_directory = os.path.abspath(os.path.expanduser(base_directory))
+            legacy_directory = os.path.join(home_directory, self.LEGACY_DIRECTORY_NAME)
+
+            # Compatibilidade: versões anteriores usavam ~/Audios.
+            # O aplicativo agora mantém um único diretório padrão: ~/Audio.
+            if os.path.normcase(requested_directory) == os.path.normcase(
+                os.path.abspath(legacy_directory)
+            ):
+                requested_directory = default_directory
+
+            self.base_directory = requested_directory
 
         self.ensure_directory_exists(self.base_directory)
 
