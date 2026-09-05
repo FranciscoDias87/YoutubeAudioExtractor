@@ -36,6 +36,31 @@ class YouTubeService:
             return 0
         return max(0, min(100, int(downloaded / total * 100)))
 
+    @staticmethod
+    def _postprocessor_options(audio_format: str, quality: str) -> dict:
+        """Build deterministic FFmpeg extraction options.
+
+        AAC is intentionally forced to ADTS. This prevents an AAC source that
+        is already wrapped in an M4A/MP4 container from being accepted as the
+        final output when the user explicitly requested the standalone .aac
+        format.
+        """
+        postprocessor = {
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": audio_format,
+            "preferredquality": quality,
+        }
+
+        if audio_format == "aac":
+            postprocessor["postprocessor_args"] = [
+                "-c:a",
+                "aac",
+                "-f",
+                "adts",
+            ]
+
+        return postprocessor
+
     def extract_audio(
         self,
         url: str,
@@ -85,11 +110,7 @@ class YouTubeService:
 
         options = {
             "format": "bestaudio/best",
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": format,
-                "preferredquality": quality,
-            }],
+            "postprocessors": [self._postprocessor_options(format, quality)],
             "outtmpl": os.path.join(self.file_manager.base_directory, "%(title)s.%(ext)s"),
             "noplaylist": True,
             "progress_hooks": [hook],
@@ -139,11 +160,7 @@ class YouTubeService:
 
         options = {
             "format": "bestaudio/best",
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": format,
-                "preferredquality": quality,
-            }],
+            "postprocessors": [self._postprocessor_options(format, quality)],
             "outtmpl": os.path.join(playlist_path, "%(title)s.%(ext)s"),
             "noplaylist": False,
             "progress_hooks": [hook],
