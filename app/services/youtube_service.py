@@ -38,28 +38,33 @@ class YouTubeService:
 
     @staticmethod
     def _postprocessor_options(audio_format: str, quality: str) -> dict:
-        """Build deterministic FFmpeg extraction options.
-
-        AAC is intentionally forced to ADTS. This prevents an AAC source that
-        is already wrapped in an M4A/MP4 container from being accepted as the
-        final output when the user explicitly requested the standalone .aac
-        format.
-        """
-        postprocessor = {
+        """Build the FFmpeg extraction postprocessor options."""
+        return {
             "key": "FFmpegExtractAudio",
             "preferredcodec": audio_format,
             "preferredquality": quality,
         }
 
-        if audio_format == "aac":
-            postprocessor["postprocessor_args"] = [
+    @staticmethod
+    def _postprocessor_args(audio_format: str) -> dict:
+        """Return yt-dlp postprocessor arguments for special containers.
+
+        yt-dlp exposes ``postprocessor_args`` at the global ydl options level,
+        keyed by postprocessor name. AAC is forced to an ADTS container so the
+        requested ``.aac`` file is not silently left as ``.m4a`` when the
+        downloaded source is already AAC inside an M4A container.
+        """
+        if audio_format != "aac":
+            return {}
+
+        return {
+            "ExtractAudio": [
                 "-c:a",
                 "aac",
                 "-f",
                 "adts",
             ]
-
-        return postprocessor
+        }
 
     def extract_audio(
         self,
@@ -98,6 +103,17 @@ class YouTubeService:
         except Exception as exc:
             return {"success": False, "error": str(exc), "message": "Erro na extração."}
 
+    def _build_options(self, output_template, format, quality, noplaylist, progress_hook):
+        options = {
+            "format": "bestaudio/best",
+            "postprocessors": [self._postprocessor_options(format, quality)],
+            "outtmpl": output_template,
+            "noplaylist": noplaylist,
+            "progress_hooks": [progress_hook],
+        }
+        options.update(self._postprocessor_args(format))
+        return options
+
     def _download_video(self, url, info, format, quality, progress_callback):
         title = info.get("title", "Unknown Video")
         author = info.get("uploader", "Unknown")
@@ -108,13 +124,13 @@ class YouTubeService:
             if progress_callback:
                 progress_callback(data)
 
-        options = {
-            "format": "bestaudio/best",
-            "postprocessors": [self._postprocessor_options(format, quality)],
-            "outtmpl": os.path.join(self.file_manager.base_directory, "%(title)s.%(ext)s"),
-            "noplaylist": True,
-            "progress_hooks": [hook],
-        }
+        options = self._build_options(
+            os.path.join(self.file_manager.base_directory, "%(title)s.%(ext)s"),
+            format,
+            quality,
+            True,
+            hook,
+        )
 
         with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([url])
@@ -158,13 +174,13 @@ class YouTubeService:
             if progress_callback:
                 progress_callback(data)
 
-        options = {
-            "format": "bestaudio/best",
-            "postprocessors": [self._postprocessor_options(format, quality)],
-            "outtmpl": os.path.join(playlist_path, "%(title)s.%(ext)s"),
-            "noplaylist": False,
-            "progress_hooks": [hook],
-        }
+        options = self._build_options(
+            os.path.join(playlist_path, "%(title)s.%(ext)s"),
+            format,
+            quality,
+            False,
+            hook,
+        )
 
         with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([url])
