@@ -15,6 +15,10 @@ import yt_dlp
 from file_manager import FileManager
 
 
+class DownloadCancelled(Exception):
+    """Raised internally when an active download receives a cancel request."""
+
+
 class YouTubeService:
     """Service responsible for extracting audio from YouTube URLs."""
 
@@ -39,40 +43,23 @@ class YouTubeService:
 
     @staticmethod
     def _postprocessor_options(audio_format: str, quality: str) -> dict:
-        """Build the yt-dlp FFmpeg extraction postprocessor options."""
-        # AAC is handled by a deterministic FFmpeg pass after yt-dlp.
-        # Asking yt-dlp for M4A here gives us a stable intermediate container.
         codec = "m4a" if audio_format == "aac" else audio_format
-        return {
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": codec,
-            "preferredquality": quality,
-        }
+        return {"key": "FFmpegExtractAudio", "preferredcodec": codec, "preferredquality": quality}
 
     @staticmethod
     def _postprocessor_args(audio_format: str) -> dict:
-        """Return yt-dlp postprocessor arguments for special containers."""
         return {}
 
     @staticmethod
     def _ffmpeg_aac(input_path: str, output_path: str, quality: str) -> None:
-        """Convert an intermediate audio file to a real AAC/ADTS file."""
         bitrate = YouTubeService._normalize_quality(quality).lower()
-        command = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            input_path,
-            "-vn",
-            "-c:a",
-            "aac",
-            "-b:a",
-            bitrate,
-            "-f",
-            "adts",
-            output_path,
-        ]
+        command = ["ffmpeg", "-y", "-i", input_path, "-vn", "-c:a", "aac", "-b:a", bitrate, "-f", "adts", output_path]
         subprocess.run(command, check=True, capture_output=True, text=True)
+
+    @staticmethod
+    def _check_cancel(cancellation_callback: Optional[Callable[[], bool]]) -> None:
+        if cancellation_callback and cancellation_callback():
+            raise DownloadCancelled()
 
     def extract_audio(
         self,
@@ -80,29 +67,29 @@ class YouTubeService:
         format: str = "mp3",
         quality: str = "128K",
         progress_callback: Optional[Callable[[dict], None]] = None,
+        cancellation_callback: Optional[Callable[[], bool]] = None,
     ) -> dict:
         """Extract audio from a single video or playlist."""
         url = (url or "").strip()
         format = (format or "mp3").lower().strip()
-
         if not url:
             return {"success": False, "error": "URL não informada."}
         if format not in self.SUPPORTED_FORMATS:
             return {"success": False, "error": f"Formato não suportado: {format}"}
-
         quality = self._normalize_quality(quality)
         if quality not in {"64K", "128K", "192K", "320K"}:
             return {"success": False, "error": f"Qualidade não suportada: {quality}"}
 
         try:
+            self._check_cancel(cancellation_callback)
             with yt_dlp.YoutubeDL({"quiet": True, "noplaylist": False}) as ydl:
                 info = ydl.extract_info(url, download=False)
-
-            is_playlist = info.get("_type") == "playlist"
-            if is_playlist:
-                return self._download_playlist(url, info, format, quality, progress_callback)
-
-            return self._download_video(url, info, format, quality, progress_callback)
+            self._check_cancel(cancellation_callback)
+            if info.get("_type") == "playlist":
+                return self._download_playlist(url, info, format, quality, progress_callback, cancellation_callback)
+            return self._download_video(url, info, format, quality, progress_callback, cancellation_callback)
+        except DownloadCancelled:
+            return {"success": False, "cancelled": True, "message": "Download cancelado pelo usuário."}
         except Exception as exc:
             return {"success": False, "error": str(exc), "message": "Erro na extração."}
 
@@ -117,26 +104,21 @@ class YouTubeService:
         options.update(self._postprocessor_args(format))
         return options
 
-    def _download_video(self, url, info, format, quality, progress_callback):
+    def _download_video(self, url, info, format, quality, progress_callback, cancellation_callback=None):
         title = info.get("title", "Unknown Video")
         author = info.get("uploader", "Unknown")
-        final_filename = self.file_manager.generate_filename(title, format)
-        final_path = os.path.join(self.file_manager.base_directory, final_filename)
 
         def hook(data):
+            self._check_cancel(cancellation_callback)
             if progress_callback:
                 progress_callback(data)
 
-        options = self._build_options(
-            os.path.join(self.file_manager.base_directory, "%(title)s.%(ext)s"),
-            format,
-            quality,
-            True,
-            hook,
-        )
-
+        final_filename = self.file_manager.generate_filename(title, format)
+        final_path = os.path.join(self.file_manager.base_directory, final_filename)
+        options = self._build_options(os.path.join(self.file_manager.base_directory, "%(title)s.%(ext)s"), format, quality, True, hook)
         with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([url])
+        self._check_cancel(cancellation_callback)
 
         if format == "aac":
             intermediate = self._find_downloaded_file(title, {".m4a", ".webm", ".opus", ".mp3", ".wav", ".flac"})
@@ -146,11 +128,7 @@ class YouTubeService:
             if os.path.abspath(intermediate) != os.path.abspath(final_path):
                 os.remove(intermediate)
         else:
-            candidates = [
-                os.path.join(self.file_manager.base_directory, name)
-                for name in os.listdir(self.file_manager.base_directory)
-                if name.startswith(title) and name.lower().endswith(f".{format}")
-            ]
+            candidates = [os.path.join(self.file_manager.base_directory, name) for name in os.listdir(self.file_manager.base_directory) if name.startswith(title) and name.lower().endswith(f".{format}")]
             if candidates:
                 source = candidates[0]
                 if os.path.abspath(source) != os.path.abspath(final_path):
@@ -160,19 +138,7 @@ class YouTubeService:
                         final_filename = os.path.basename(renamed)
 
         artist, song = self.file_manager.extract_artist_and_song(title)
-        return {
-            "success": True,
-            "type": "video",
-            "video_title": title,
-            "video_author": author,
-            "artist": artist,
-            "song": song,
-            "filename": final_filename,
-            "full_path": final_path,
-            "format": format,
-            "quality": quality,
-            "message": "Áudio extraído com sucesso!",
-        }
+        return {"success": True, "type": "video", "video_title": title, "video_author": author, "artist": artist, "song": song, "filename": final_filename, "full_path": final_path, "format": format, "quality": quality, "message": "Áudio extraído com sucesso!"}
 
     def _find_downloaded_file(self, title: str, extensions: set[str]) -> Optional[str]:
         matches = []
@@ -182,29 +148,42 @@ class YouTubeService:
                 matches.append(path)
         return matches[0] if matches else None
 
-    def _download_playlist(self, url, info, format, quality, progress_callback):
+    def _download_playlist(self, url, info, format, quality, progress_callback, cancellation_callback=None):
         playlist_title = info.get("title", "Unknown Playlist")
+        entries = [entry for entry in (info.get("entries") or []) if entry]
+        playlist_total = len(entries) or info.get("playlist_count") or info.get("n_entries") or 0
         playlist_dir = self.file_manager.sanitize_filename(playlist_title)
         playlist_path = os.path.join(self.file_manager.base_directory, playlist_dir)
         self.file_manager.ensure_directory_exists(playlist_path)
 
         def hook(data):
+            self._check_cancel(cancellation_callback)
+            enriched = dict(data)
+            info_dict = data.get("info_dict") or {}
+            index = info_dict.get("playlist_index") or data.get("playlist_index") or 0
+            total = info_dict.get("n_entries") or data.get("n_entries") or playlist_total
+            try:
+                index = int(index)
+                total = int(total)
+            except (TypeError, ValueError):
+                index, total = 0, playlist_total
+            item_percent = self._percent(data)
+            if total and index:
+                overall_percent = int(max(0, min(100, (((index - 1) + item_percent / 100) / total) * 100)))
+            else:
+                overall_percent = item_percent
+            enriched.update({"playlist_index": index, "playlist_total": total, "item_percent": item_percent, "overall_percent": overall_percent})
             if progress_callback:
-                progress_callback(data)
+                progress_callback(enriched)
 
-        options = self._build_options(
-            os.path.join(playlist_path, "%(title)s.%(ext)s"),
-            format,
-            quality,
-            False,
-            hook,
-        )
-
+        options = self._build_options(os.path.join(playlist_path, "%(title)s.%(ext)s"), format, quality, False, hook)
         with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([url])
+        self._check_cancel(cancellation_callback)
 
         if format == "aac":
             for name in os.listdir(playlist_path):
+                self._check_cancel(cancellation_callback)
                 source = os.path.join(playlist_path, name)
                 if not os.path.isfile(source) or os.path.splitext(name)[1].lower() not in {".m4a", ".webm", ".opus", ".mp3", ".wav", ".flac"}:
                     continue
@@ -212,12 +191,4 @@ class YouTubeService:
                 self._ffmpeg_aac(source, output, quality)
                 os.remove(source)
 
-        return {
-            "success": True,
-            "type": "playlist",
-            "playlist_title": playlist_title,
-            "playlist_path": playlist_path,
-            "format": format,
-            "quality": quality,
-            "message": "Playlist baixada com sucesso!",
-        }
+        return {"success": True, "type": "playlist", "playlist_title": playlist_title, "playlist_count": playlist_total, "playlist_path": playlist_path, "format": format, "quality": quality, "message": "Playlist baixada com sucesso!"}
