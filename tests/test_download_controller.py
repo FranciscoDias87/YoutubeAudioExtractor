@@ -5,11 +5,7 @@ from app.workers.download_worker import DownloadWorker
 
 
 def test_controller_accepts_supported_download_parameters():
-    valid, error = DownloadController.validate(
-        "https://www.youtube.com/watch?v=test",
-        "mp3",
-        "128",
-    )
+    valid, error = DownloadController.validate("https://www.youtube.com/watch?v=test", "mp3", "128")
     assert valid is True
     assert error == ""
 
@@ -32,13 +28,8 @@ def test_controller_rejects_invalid_quality():
     assert "Qualidade" in error
 
 
-def test_worker_emits_success_for_service_result(qtbot):
-    result = {
-        "success": True,
-        "type": "video",
-        "filename": "teste.mp3",
-        "message": "Áudio extraído com sucesso!",
-    }
+def test_worker_emits_success_for_service_result():
+    result = {"success": True, "type": "video", "filename": "teste.mp3", "message": "Áudio extraído com sucesso!"}
     with patch("app.workers.download_worker.YouTubeService") as service_cls:
         service_cls.return_value.extract_audio.return_value = result
         worker = DownloadWorker("https://youtu.be/test", ".", "mp3", "128K")
@@ -48,12 +39,9 @@ def test_worker_emits_success_for_service_result(qtbot):
         assert received == [result]
 
 
-def test_worker_emits_error_for_service_failure(qtbot):
+def test_worker_emits_error_for_service_failure():
     with patch("app.workers.download_worker.YouTubeService") as service_cls:
-        service_cls.return_value.extract_audio.return_value = {
-            "success": False,
-            "error": "falha simulada",
-        }
+        service_cls.return_value.extract_audio.return_value = {"success": False, "error": "falha simulada"}
         worker = DownloadWorker("https://youtu.be/test", ".", "mp3", "128K")
         errors = []
         worker.failed.connect(errors.append)
