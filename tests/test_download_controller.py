@@ -40,6 +40,16 @@ def test_worker_emits_success_for_service_result():
         service_cls.return_value.extract_audio.assert_called_once()
 
 
+def test_worker_passes_reused_metadata_to_service():
+    metadata = {"_type": "playlist", "title": "Playlist", "entries": []}
+    with patch("app.workers.download_worker.YouTubeService") as service_cls:
+        service_cls.return_value.extract_audio.return_value = {"success": False, "error": "simulada"}
+        worker = DownloadWorker("https://youtu.be/test", ".", "mp3", "128K", metadata=metadata)
+        worker.run()
+        kwargs = service_cls.return_value.extract_audio.call_args.kwargs
+        assert kwargs["metadata"] is metadata
+
+
 def test_worker_emits_error_for_service_failure():
     with patch("app.workers.download_worker.YouTubeService") as service_cls:
         service_cls.return_value.extract_audio.return_value = {"success": False, "error": "falha simulada"}
