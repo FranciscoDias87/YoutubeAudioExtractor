@@ -12,7 +12,6 @@ from app.services.youtube_service import DownloadCancelled, YouTubeService
 
 
 def _trace(message):
-    """Print timestamped diagnostic information to the VS Code terminal."""
     print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] [WORKER] {message}", flush=True)
 
 
@@ -24,16 +23,16 @@ class DownloadWorker(QThread):
     failed = pyqtSignal(str)
     cancelled = pyqtSignal()
 
-    def __init__(self, url, output_directory, audio_format="mp3", quality="128K", parent=None):
+    def __init__(self, url, output_directory, audio_format="mp3", quality="128K", metadata=None, parent=None):
         super().__init__(parent)
         self.url = url
         self.output_directory = output_directory
         self.audio_format = audio_format
         self.quality = quality
+        self.metadata = metadata
         self._cancel_event = threading.Event()
 
     def cancel(self):
-        """Request a cooperative cancellation of the active yt-dlp operation."""
         _trace("Solicitação de cancelamento recebida")
         self._cancel_event.set()
 
@@ -42,19 +41,17 @@ class DownloadWorker(QThread):
 
     def run(self):
         started_at = time.perf_counter()
-        _trace(f"run() iniciado | formato={self.audio_format} | qualidade={self.quality}")
+        _trace(f"run() iniciado | formato={self.audio_format} | qualidade={self.quality} | metadata_reutilizado={self.metadata is not None}")
         _trace(f"URL={self.url}")
         try:
-            _trace("Criando YouTubeService...")
             service = YouTubeService(self.output_directory)
-            _trace("YouTubeService criado")
-            _trace("Chamando YouTubeService.extract_audio()...")
             result = service.extract_audio(
                 url=self.url,
                 format=self.audio_format,
                 quality=self.quality,
                 progress_callback=self.progress.emit,
                 cancellation_callback=self.is_cancel_requested,
+                metadata=self.metadata,
             )
             _trace(f"extract_audio() retornou após {time.perf_counter() - started_at:.2f}s | result={result.get('success')} | cancelled={result.get('cancelled', False)}")
             if result.get("cancelled"):
