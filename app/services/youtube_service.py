@@ -1,8 +1,4 @@
-"""Centralized YouTube extraction service.
-
-The service owns yt-dlp interaction so UI windows do not need to know
-how downloads, conversion and progress hooks are implemented.
-"""
+"""Centralized YouTube extraction service."""
 
 from __future__ import annotations
 
@@ -18,7 +14,6 @@ from file_manager import FileManager
 
 
 def _trace(message):
-    """Print timestamped diagnostic information to the VS Code terminal."""
     print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] [SERVICE] {message}", flush=True)
 
 
@@ -75,31 +70,39 @@ class YouTubeService:
         quality: str = "128K",
         progress_callback: Optional[Callable[[dict], None]] = None,
         cancellation_callback: Optional[Callable[[], bool]] = None,
+        metadata: Optional[dict] = None,
     ) -> dict:
-        """Extract audio from a single video or playlist."""
+        """Extract audio from a single video or playlist.
+
+        ``metadata`` may contain the result previously produced by MetadataWorker.
+        For playlists this avoids a second, potentially very expensive, playlist
+        discovery pass.
+        """
         started_at = time.perf_counter()
         url = (url or "").strip()
         format = (format or "mp3").lower().strip()
-        _trace(f"extract_audio() iniciado | formato={format} | qualidade={quality}")
+        _trace(f"extract_audio() iniciado | formato={format} | qualidade={quality} | metadata_reutilizado={metadata is not None}")
         if not url:
-            _trace("URL não informada")
             return {"success": False, "error": "URL não informada."}
         if format not in self.SUPPORTED_FORMATS:
-            _trace(f"Formato não suportado: {format}")
             return {"success": False, "error": f"Formato não suportado: {format}"}
         quality = self._normalize_quality(quality)
         if quality not in {"64K", "128K", "192K", "320K"}:
-            _trace(f"Qualidade não suportada: {quality}")
             return {"success": False, "error": f"Qualidade não suportada: {quality}"}
 
         try:
             self._check_cancel(cancellation_callback)
-            info_started = time.perf_counter()
-            _trace("Criando YoutubeDL para consulta de metadados do download...")
-            with yt_dlp.YoutubeDL({"quiet": True, "noplaylist": False}) as ydl:
-                _trace("extract_info() do download iniciado")
-                info = ydl.extract_info(url, download=False)
-            _trace(f"extract_info() do download concluído em {time.perf_counter() - info_started:.2f}s")
+            if metadata is not None:
+                info = metadata
+                _trace("Usando metadados fornecidos pelo MetadataWorker; extract_info() adicional será evitado.")
+            else:
+                info_started = time.perf_counter()
+                _trace("Criando YoutubeDL para consulta de metadados do download...")
+                with yt_dlp.YoutubeDL({"quiet": True, "noplaylist": False}) as ydl:
+                    _trace("extract_info() do download iniciado")
+                    info = ydl.extract_info(url, download=False)
+                _trace(f"extract_info() do download concluído em {time.perf_counter() - info_started:.2f}s")
+
             self._check_cancel(cancellation_callback)
             info_type = info.get("_type")
             _trace(f"Tipo retornado pelo yt-dlp: {info_type or 'video'}")
@@ -131,7 +134,6 @@ class YouTubeService:
         started_at = time.perf_counter()
         title = info.get("title", "Unknown Video")
         author = info.get("uploader", "Unknown")
-        _trace(f"_download_video() iniciado | título={title}")
         hook_state = {"last_status": None}
 
         def hook(data):
@@ -146,16 +148,11 @@ class YouTubeService:
         final_filename = self.file_manager.generate_filename(title, format)
         final_path = os.path.join(self.file_manager.base_directory, final_filename)
         options = self._build_options(os.path.join(self.file_manager.base_directory, "%(title)s.%(ext)s"), format, quality, True, hook)
-        _trace("_download_video(): opções yt-dlp preparadas")
-        download_started = time.perf_counter()
-        _trace("_download_video(): ydl.download() iniciado")
         with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([url])
-        _trace(f"_download_video(): ydl.download() concluído em {time.perf_counter() - download_started:.2f}s")
         self._check_cancel(cancellation_callback)
 
         if format == "aac":
-            _trace("_download_video(): iniciando conversão AAC")
             intermediate = self._find_downloaded_file(title, {".m4a", ".webm", ".opus", ".mp3", ".wav", ".flac"})
             if not intermediate:
                 raise FileNotFoundError("Arquivo intermediário de áudio não encontrado para conversão AAC.")
@@ -190,10 +187,12 @@ class YouTubeService:
         entries = [entry for entry in (info.get("entries") or []) if entry]
         playlist_total = len(entries) or info.get("playlist_count") or info.get("n_entries") or 0
         _trace(f"_download_playlist() iniciado | título={playlist_title} | entries={len(entries)} | total={playlist_total}")
+        if not entries:
+            raise ValueError("A playlist não possui vídeos disponíveis para download.")
+
         playlist_dir = self.file_manager.sanitize_filename(playlist_title)
         playlist_path = os.path.join(self.file_manager.base_directory, playlist_dir)
         self.file_manager.ensure_directory_exists(playlist_path)
-        _trace(f"Pasta da playlist pronta: {playlist_path}")
         hook_state = {"last_status": None, "first_downloading": False}
 
         def hook(data):
@@ -208,10 +207,7 @@ class YouTubeService:
             except (TypeError, ValueError):
                 index, total = 0, playlist_total
             item_percent = self._percent(data)
-            if total and index:
-                overall_percent = int(max(0, min(100, (((index - 1) + item_percent / 100) / total) * 100)))
-            else:
-                overall_percent = item_percent
+            overall_percent = int(max(0, min(100, (((index - 1) + item_percent / 100) / total) * 100))) if total and index else item_percent
             status = data.get("status")
             if status != hook_state["last_status"]:
                 hook_state["last_status"] = status
@@ -223,17 +219,31 @@ class YouTubeService:
             if progress_callback:
                 progress_callback(enriched)
 
-        options = self._build_options(os.path.join(playlist_path, "%(title)s.%(ext)s"), format, quality, False, hook)
-        _trace("_download_playlist(): opções yt-dlp preparadas")
+        options = self._build_options(os.path.join(playlist_path, "%(title)s.%(ext)s"), format, quality, True, hook)
+        _trace("_download_playlist(): processando entries previamente extraídas; nenhuma nova descoberta da playlist será feita.")
         download_started = time.perf_counter()
-        _trace("_download_playlist(): ydl.download() iniciado")
         with yt_dlp.YoutubeDL(options) as ydl:
-            ydl.download([url])
-        _trace(f"_download_playlist(): ydl.download() concluído em {time.perf_counter() - download_started:.2f}s")
+            for position, entry in enumerate(entries, start=1):
+                self._check_cancel(cancellation_callback)
+                entry = dict(entry)
+                entry["playlist_index"] = entry.get("playlist_index") or position
+                entry["playlist_count"] = playlist_total
+                entry["n_entries"] = playlist_total
+                _trace(f"_download_playlist(): process_ie_result() faixa={position}/{playlist_total}")
+                ydl.process_ie_result(
+                    entry,
+                    download=True,
+                    extra_info={
+                        "playlist": playlist_title,
+                        "playlist_index": position,
+                        "playlist_autonumber": position,
+                        "n_entries": playlist_total,
+                    },
+                )
+        _trace(f"_download_playlist(): processamento concluído em {time.perf_counter() - download_started:.2f}s")
         self._check_cancel(cancellation_callback)
 
         if format == "aac":
-            _trace("_download_playlist(): iniciando conversões AAC")
             for name in os.listdir(playlist_path):
                 self._check_cancel(cancellation_callback)
                 source = os.path.join(playlist_path, name)
