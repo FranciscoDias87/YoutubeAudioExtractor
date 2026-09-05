@@ -11,16 +11,18 @@ def test_normalize_quality_adds_k_suffix():
 
 def test_aac_uses_adts_and_aac_codec():
     options = YouTubeService._postprocessor_options("aac", "128K")
+    args = YouTubeService._postprocessor_args("aac")
 
     assert options["preferredcodec"] == "aac"
-    assert options["postprocessor_args"] == ["-c:a", "aac", "-f", "adts"]
+    assert args["ExtractAudio"] == ["-c:a", "aac", "-f", "adts"]
 
 
 def test_m4a_does_not_use_aac_adts_override():
     options = YouTubeService._postprocessor_options("m4a", "128K")
+    args = YouTubeService._postprocessor_args("m4a")
 
     assert options["preferredcodec"] == "m4a"
-    assert "postprocessor_args" not in options
+    assert args == {}
 
 
 def test_invalid_url_is_rejected(tmp_path):
