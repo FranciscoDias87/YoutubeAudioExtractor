@@ -23,6 +23,7 @@ class PlaylistWindow(QMainWindow):
         self.controller = DownloadController(self)
         self._playlist_total = 0
         self._playlist_current = 0
+        self._playlist_metadata = None
         self.init_ui()
         self._connect_controller()
 
@@ -108,10 +109,12 @@ class PlaylistWindow(QMainWindow):
         valid, error = self.controller.validate(url, self.format_combo.currentText(), self.quality_combo.currentText())
         if not valid: QMessageBox.warning(self, "Aviso", error); return
         self.log_message("Processando playlist em segundo plano...")
+        self._playlist_metadata = None
         self.process_url_button.setEnabled(False); self.download_button.setEnabled(False); self.count_label.setText("Consultando...")
         self.controller.inspect_async(url, single=False)
 
     def _metadata_loaded(self, info):
+        self._playlist_metadata = info
         self.process_url_button.setEnabled(True)
         self.title_label.setText(info.get("title", "N/A")); self.author_label.setText(info.get("uploader", "N/A"))
         entries = [entry for entry in (info.get("entries") or []) if entry]
@@ -120,10 +123,11 @@ class PlaylistWindow(QMainWindow):
         self.count_label.setText(str(self._playlist_total) if self._playlist_total else "Não informado")
         playlist_title = info.get("title", "Playlist")
         self.folder_label.setText(os.path.join(self.output_directory, FileManager().sanitize_filename(playlist_title)))
-        self.download_button.setEnabled(True)
-        self.log_message(f"Playlist processada: {self._playlist_total or 'quantidade não informada'} vídeo(s).")
+        self.download_button.setEnabled(bool(entries))
+        self.log_message(f"Playlist processada: {self._playlist_total or 'quantidade não informada'} vídeo(s). Metadados prontos para reutilização no download.")
 
     def _metadata_error(self, error):
+        self._playlist_metadata = None
         self.process_url_button.setEnabled(True); self.download_button.setEnabled(False); self.count_label.setText("N/A")
         self.log_message(f"Erro ao processar playlist: {error}"); QMessageBox.critical(self, "Erro", f"Não foi possível processar a playlist:\n{error}")
 
@@ -132,9 +136,18 @@ class PlaylistWindow(QMainWindow):
         if directory: self.output_directory = directory; self.output_label.setText(directory)
 
     def start_download(self):
-        self.log_message("Iniciando download da playlist...")
+        if not self._playlist_metadata:
+            QMessageBox.warning(self, "Aviso", "Processe a playlist antes de iniciar o download.")
+            return
+        self.log_message("Iniciando download da playlist com metadados já processados...")
         self._playlist_current = 0
-        self.controller.download(self.url_input.text().strip(), self.output_directory, self.format_combo.currentText(), self.quality_combo.currentText())
+        self.controller.download(
+            self.url_input.text().strip(),
+            self.output_directory,
+            self.format_combo.currentText(),
+            self.quality_combo.currentText(),
+            metadata=self._playlist_metadata,
+        )
 
     def cancel_download(self):
         if self.controller.cancel():
@@ -148,7 +161,7 @@ class PlaylistWindow(QMainWindow):
         self.item_progress_label.setText("Faixa atual: iniciando...")
 
     def _download_finished(self):
-        self.download_button.setEnabled(bool(self.url_input.text().strip()) and self._playlist_total > 0); self.process_url_button.setEnabled(True); self.browse_button.setEnabled(True); self.cancel_button.setEnabled(False)
+        self.download_button.setEnabled(bool(self.url_input.text().strip()) and self._playlist_total > 0 and self._playlist_metadata is not None); self.process_url_button.setEnabled(True); self.browse_button.setEnabled(True); self.cancel_button.setEnabled(False)
 
     def update_progress(self, data):
         if data.get("status") not in {"downloading", "finished"}: return
