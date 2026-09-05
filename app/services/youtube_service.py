@@ -7,6 +7,7 @@ how downloads, conversion and progress hooks are implemented.
 from __future__ import annotations
 
 import os
+import subprocess
 from typing import Callable, Optional
 
 import yt_dlp
@@ -38,33 +39,40 @@ class YouTubeService:
 
     @staticmethod
     def _postprocessor_options(audio_format: str, quality: str) -> dict:
-        """Build the FFmpeg extraction postprocessor options."""
+        """Build the yt-dlp FFmpeg extraction postprocessor options."""
+        # AAC is handled by a deterministic FFmpeg pass after yt-dlp.
+        # Asking yt-dlp for M4A here gives us a stable intermediate container.
+        codec = "m4a" if audio_format == "aac" else audio_format
         return {
             "key": "FFmpegExtractAudio",
-            "preferredcodec": audio_format,
+            "preferredcodec": codec,
             "preferredquality": quality,
         }
 
     @staticmethod
     def _postprocessor_args(audio_format: str) -> dict:
-        """Return yt-dlp postprocessor arguments for special containers.
+        """Return yt-dlp postprocessor arguments for special containers."""
+        return {}
 
-        yt-dlp exposes ``postprocessor_args`` at the global ydl options level,
-        keyed by postprocessor name. AAC is forced to an ADTS container so the
-        requested ``.aac`` file is not silently left as ``.m4a`` when the
-        downloaded source is already AAC inside an M4A container.
-        """
-        if audio_format != "aac":
-            return {}
-
-        return {
-            "ExtractAudio": [
-                "-c:a",
-                "aac",
-                "-f",
-                "adts",
-            ]
-        }
+    @staticmethod
+    def _ffmpeg_aac(input_path: str, output_path: str, quality: str) -> None:
+        """Convert an intermediate audio file to a real AAC/ADTS file."""
+        bitrate = YouTubeService._normalize_quality(quality).lower()
+        command = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            input_path,
+            "-vn",
+            "-c:a",
+            "aac",
+            "-b:a",
+            bitrate,
+            "-f",
+            "adts",
+            output_path,
+        ]
+        subprocess.run(command, check=True, capture_output=True, text=True)
 
     def extract_audio(
         self,
@@ -73,10 +81,7 @@ class YouTubeService:
         quality: str = "128K",
         progress_callback: Optional[Callable[[dict], None]] = None,
     ) -> dict:
-        """Extract audio from a single video or playlist.
-
-        ``progress_callback`` receives yt-dlp progress dictionaries.
-        """
+        """Extract audio from a single video or playlist."""
         url = (url or "").strip()
         format = (format or "mp3").lower().strip()
 
@@ -95,9 +100,7 @@ class YouTubeService:
 
             is_playlist = info.get("_type") == "playlist"
             if is_playlist:
-                return self._download_playlist(
-                    url, info, format, quality, progress_callback
-                )
+                return self._download_playlist(url, info, format, quality, progress_callback)
 
             return self._download_video(url, info, format, quality, progress_callback)
         except Exception as exc:
@@ -135,19 +138,26 @@ class YouTubeService:
         with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([url])
 
-        candidates = [
-            os.path.join(self.file_manager.base_directory, name)
-            for name in os.listdir(self.file_manager.base_directory)
-            if name.startswith(title) and name.lower().endswith(f".{format}")
-        ]
-
-        if candidates:
-            source = candidates[0]
-            if os.path.abspath(source) != os.path.abspath(final_path):
-                renamed = self.file_manager.rename_file(source, title, format)
-                if renamed:
-                    final_path = renamed
-                    final_filename = os.path.basename(renamed)
+        if format == "aac":
+            intermediate = self._find_downloaded_file(title, {".m4a", ".webm", ".opus", ".mp3", ".wav", ".flac"})
+            if not intermediate:
+                raise FileNotFoundError("Arquivo intermediário de áudio não encontrado para conversão AAC.")
+            self._ffmpeg_aac(intermediate, final_path, quality)
+            if os.path.abspath(intermediate) != os.path.abspath(final_path):
+                os.remove(intermediate)
+        else:
+            candidates = [
+                os.path.join(self.file_manager.base_directory, name)
+                for name in os.listdir(self.file_manager.base_directory)
+                if name.startswith(title) and name.lower().endswith(f".{format}")
+            ]
+            if candidates:
+                source = candidates[0]
+                if os.path.abspath(source) != os.path.abspath(final_path):
+                    renamed = self.file_manager.rename_file(source, title, format)
+                    if renamed:
+                        final_path = renamed
+                        final_filename = os.path.basename(renamed)
 
         artist, song = self.file_manager.extract_artist_and_song(title)
         return {
@@ -163,6 +173,14 @@ class YouTubeService:
             "quality": quality,
             "message": "Áudio extraído com sucesso!",
         }
+
+    def _find_downloaded_file(self, title: str, extensions: set[str]) -> Optional[str]:
+        matches = []
+        for name in os.listdir(self.file_manager.base_directory):
+            path = os.path.join(self.file_manager.base_directory, name)
+            if os.path.isfile(path) and name.startswith(title) and os.path.splitext(name)[1].lower() in extensions:
+                matches.append(path)
+        return matches[0] if matches else None
 
     def _download_playlist(self, url, info, format, quality, progress_callback):
         playlist_title = info.get("title", "Unknown Playlist")
@@ -184,6 +202,15 @@ class YouTubeService:
 
         with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([url])
+
+        if format == "aac":
+            for name in os.listdir(playlist_path):
+                source = os.path.join(playlist_path, name)
+                if not os.path.isfile(source) or os.path.splitext(name)[1].lower() not in {".m4a", ".webm", ".opus", ".mp3", ".wav", ".flac"}:
+                    continue
+                output = os.path.splitext(source)[0] + ".aac"
+                self._ffmpeg_aac(source, output, quality)
+                os.remove(source)
 
         return {
             "success": True,
