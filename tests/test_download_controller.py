@@ -37,6 +37,7 @@ def test_worker_emits_success_for_service_result():
         worker.succeeded.connect(received.append)
         worker.run()
         assert received == [result]
+        service_cls.return_value.extract_audio.assert_called_once()
 
 
 def test_worker_emits_error_for_service_failure():
@@ -47,3 +48,15 @@ def test_worker_emits_error_for_service_failure():
         worker.failed.connect(errors.append)
         worker.run()
         assert errors == ["falha simulada"]
+
+
+def test_worker_cancel_sets_cancellation_flag():
+    worker = DownloadWorker("https://youtu.be/test", ".", "mp3", "128K")
+    assert worker.is_cancel_requested() is False
+    worker.cancel()
+    assert worker.is_cancel_requested() is True
+
+
+def test_controller_cancel_returns_false_without_active_worker():
+    controller = DownloadController()
+    assert controller.cancel() is False
