@@ -9,7 +9,6 @@ from app.workers.download_worker import DownloadWorker, MetadataWorker
 
 
 def _trace(message):
-    """Print timestamped diagnostic information to the VS Code terminal."""
     print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] [CONTROLLER] {message}", flush=True)
 
 
@@ -45,7 +44,6 @@ class DownloadController(QObject):
         return True, ""
 
     def inspect(self, url, single=True):
-        """Backward-compatible synchronous metadata inspection."""
         url = (url or "").strip()
         if not url:
             raise ValueError("URL não informada.")
@@ -54,7 +52,6 @@ class DownloadController(QObject):
             return ydl.extract_info(url, download=False)
 
     def inspect_async(self, url, single=False):
-        """Inspect metadata without blocking the Qt main thread."""
         url = (url or "").strip()
         if not url:
             self.metadata_failed.emit("URL não informada.")
@@ -68,39 +65,38 @@ class DownloadController(QObject):
         self.metadata_worker.start()
         return self.metadata_worker
 
-    def download(self, url, output_directory, audio_format="mp3", quality="128K"):
-        """Start a background download and return the worker."""
-        _trace("download() chamado")
+    def download(self, url, output_directory, audio_format="mp3", quality="128K", metadata=None):
+        """Start a background download, optionally reusing inspected metadata."""
+        _trace(f"download() chamado | metadata_reutilizado={metadata is not None}")
         valid, error = self.validate(url, audio_format, quality)
         if not valid:
-            _trace(f"Validação falhou: {error}")
             self.failed.emit(error)
             return None
         if self.worker is not None and self.worker.isRunning():
-            _trace("Download rejeitado: já existe um worker em andamento")
             self.failed.emit("Já existe um download em andamento.")
             return None
-        _trace("Criando DownloadWorker...")
-        self.worker = DownloadWorker(url=url, output_directory=output_directory, audio_format=audio_format, quality=quality, parent=self)
+        self.worker = DownloadWorker(
+            url=url,
+            output_directory=output_directory,
+            audio_format=audio_format,
+            quality=quality,
+            metadata=metadata,
+            parent=self,
+        )
         self.worker.progress.connect(self.progress.emit)
         self.worker.succeeded.connect(self._on_succeeded)
         self.worker.failed.connect(self._on_failed)
         self.worker.cancelled.connect(self._on_cancelled)
         self.worker.finished.connect(self._on_finished)
-        _trace("DownloadWorker criado; emitindo started")
         self.started.emit()
-        _trace("Iniciando DownloadWorker.start()")
         self.worker.start()
-        _trace("DownloadWorker.start() retornou")
         return self.worker
 
     def cancel(self):
-        """Request cancellation of the active download."""
         _trace("cancel() chamado")
         if self.worker is not None and self.worker.isRunning():
             self.worker.cancel()
             return True
-        _trace("Nenhum DownloadWorker ativo para cancelar")
         return False
 
     def _on_succeeded(self, result):
