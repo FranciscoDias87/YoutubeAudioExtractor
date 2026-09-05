@@ -1,0 +1,56 @@
+import os
+
+from app.services.youtube_service import YouTubeService
+from file_manager import FileManager
+
+
+def test_normalize_quality_adds_k_suffix():
+    assert YouTubeService._normalize_quality("128") == "128K"
+    assert YouTubeService._normalize_quality("320K") == "320K"
+
+
+def test_aac_uses_m4a_as_intermediate_for_ffmpeg():
+    options = YouTubeService._postprocessor_options("aac", "128K")
+
+    assert options["preferredcodec"] == "m4a"
+    assert options["preferredquality"] == "128K"
+
+
+def test_non_aac_keeps_requested_codec():
+    options = YouTubeService._postprocessor_options("mp3", "128K")
+
+    assert options["preferredcodec"] == "mp3"
+
+
+def test_aac_has_no_yt_dlp_container_override():
+    assert YouTubeService._postprocessor_args("aac") == {}
+
+
+def test_invalid_url_is_rejected(tmp_path):
+    service = YouTubeService(str(tmp_path))
+    result = service.extract_audio("")
+
+    assert result["success"] is False
+    assert "URL" in result["error"]
+
+
+def test_invalid_format_is_rejected(tmp_path):
+    service = YouTubeService(str(tmp_path))
+    result = service.extract_audio("https://www.youtube.com/watch?v=test", format="ogg")
+
+    assert result["success"] is False
+    assert "Formato" in result["error"]
+
+
+def test_default_output_directory_is_audio():
+    file_manager = FileManager()
+
+    assert os.path.basename(file_manager.base_directory) == "Audio"
+    assert os.path.basename(file_manager.base_directory) != "Audios"
+
+
+def test_legacy_audios_directory_is_redirected_to_audio():
+    legacy_directory = os.path.join(os.path.expanduser("~"), "Audios")
+    file_manager = FileManager(legacy_directory)
+
+    assert os.path.basename(file_manager.base_directory) == "Audio"
