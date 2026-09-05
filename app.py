@@ -5,6 +5,7 @@ from main_menu import MainMenuWindow
 from single_video_window import SingleVideoWindow
 from playlist_window import PlaylistWindow
 from splash_screen import SplashScreen
+from app.ui_service_bridge import install as install_service_bridge
 
 class YouTubeAudioExtractorApp(QObject):
     """Classe principal que gerencia todas as janelas da aplicação"""
@@ -86,6 +87,10 @@ class YouTubeAudioExtractorApp(QObject):
 
 def main():
     """Função principal da aplicação"""
+    # Instalar a ponte que direciona os downloads para o YouTubeService.
+    # Isso deve ocorrer antes da criação das janelas.
+    install_service_bridge()
+
     # Criar aplicação Qt
     app = QApplication(sys.argv)
     
