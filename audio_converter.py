@@ -46,6 +46,23 @@ class AudioConverter:
         destination = Path(output_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _startupinfo() -> subprocess.STARTUPINFO | None:
+        """Return Windows startup settings that prevent a console window."""
+        if os.name != "nt":
+            return None
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        return startupinfo
+
+    @staticmethod
+    def _creationflags() -> int:
+        """Return Windows flags that keep the FFmpeg process console hidden."""
+        if os.name != "nt":
+            return 0
+        return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
     def convert_to_aac(
         self,
         input_path: str,
@@ -77,6 +94,8 @@ class AudioConverter:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                startupinfo=self._startupinfo(),
+                creationflags=self._creationflags(),
             )
         except FileNotFoundError as exc:
             raise FFmpegNotFoundError(
