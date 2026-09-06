@@ -1,15 +1,13 @@
-"""Audio conversion service backed by FFmpeg.
-
-This module is intentionally independent from YouTube/yt-dlp concerns. The
-YouTube service can delegate audio transcoding here without knowing how FFmpeg
-is invoked.
-"""
+"""Audio conversion service backed by FFmpeg."""
 
 from __future__ import annotations
 
 import os
 import subprocess
 from pathlib import Path
+from typing import Optional
+
+from app.services.ffmpeg_manager import FFmpegManager
 
 
 class AudioConversionError(RuntimeError):
@@ -17,14 +15,15 @@ class AudioConversionError(RuntimeError):
 
 
 class FFmpegNotFoundError(AudioConversionError):
-    """Raised when FFmpeg cannot be found in PATH."""
+    """Backward-compatible alias for FFmpeg dependency failures."""
 
 
 class AudioConverter:
-    """Convert audio files using FFmpeg."""
+    """Convert audio files using a validated FFmpeg executable."""
 
-    def __init__(self, ffmpeg_command: str = "ffmpeg") -> None:
-        self.ffmpeg_command = ffmpeg_command
+    def __init__(self, ffmpeg_command: Optional[str] = None, ffmpeg_manager: Optional[FFmpegManager] = None) -> None:
+        self.ffmpeg_manager = ffmpeg_manager or FFmpegManager(executable=ffmpeg_command)
+        self.ffmpeg_command = self.ffmpeg_manager.resolve()
 
     @staticmethod
     def _normalize_quality(quality: str | int) -> str:
@@ -81,7 +80,8 @@ class AudioConverter:
             )
         except FileNotFoundError as exc:
             raise FFmpegNotFoundError(
-                "FFmpeg não encontrado. Certifique-se de que está instalado e no PATH."
+                "FFmpeg não encontrado. A instalação do YouTube Audio Extractor "
+                "deve disponibilizar uma cópia compatível do FFmpeg."
             ) from exc
         except subprocess.CalledProcessError as exc:
             stderr = (exc.stderr or "").strip()
