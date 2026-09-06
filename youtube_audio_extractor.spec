@@ -1,8 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+
 block_cipher = None
 
 added_files = []
+
+# FFmpeg is treated as an application dependency. When a validated Windows
+# binary is placed in ffmpeg/ffmpeg.exe, PyInstaller bundles it with the app.
+ffmpeg_binary = os.path.join('ffmpeg', 'ffmpeg.exe')
+if os.path.isfile(ffmpeg_binary):
+    added_files.append((ffmpeg_binary, 'ffmpeg'))
 
 hidden_imports = [
     'PyQt5.QtCore',
@@ -25,6 +33,7 @@ hidden_imports = [
     'app',
     'app.services',
     'app.services.youtube_service',
+    'app.services.ffmpeg_manager',
     'integrated_audio_extractor_playlist',
     'main_menu',
     'single_video_window',
@@ -82,7 +91,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
     version_file=None,
 )
 
@@ -112,7 +120,6 @@ if hasattr(exe, 'manifest'):
     <security>
       <requestedPrivileges>
         <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
-      </requestedPrivileges>
     </security>
   </trustInfo>
 </assembly>"""
