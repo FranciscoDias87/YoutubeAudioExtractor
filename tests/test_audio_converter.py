@@ -6,7 +6,8 @@ import pytest
 from audio_converter import AudioConversionError, AudioConverter, FFmpegNotFoundError
 
 
-def test_convert_to_aac_builds_expected_ffmpeg_command(tmp_path):
+@patch("audio_converter.FFmpegManager.resolve", return_value="ffmpeg")
+def test_convert_to_aac_builds_expected_ffmpeg_command(_resolve, tmp_path):
     source = tmp_path / "input.m4a"
     output = tmp_path / "output.aac"
     source.write_bytes(b"audio")
@@ -29,7 +30,8 @@ def test_convert_to_aac_builds_expected_ffmpeg_command(tmp_path):
     }
 
 
-def test_convert_to_aac_accepts_numeric_quality(tmp_path):
+@patch("audio_converter.FFmpegManager.resolve", return_value="ffmpeg")
+def test_convert_to_aac_accepts_numeric_quality(_resolve, tmp_path):
     source = tmp_path / "input.m4a"
     output = tmp_path / "nested" / "output.aac"
     source.write_bytes(b"audio")
@@ -42,14 +44,16 @@ def test_convert_to_aac_accepts_numeric_quality(tmp_path):
     assert output.parent.is_dir()
 
 
-def test_convert_to_aac_rejects_missing_input(tmp_path):
+@patch("audio_converter.FFmpegManager.resolve", return_value="ffmpeg")
+def test_convert_to_aac_rejects_missing_input(_resolve, tmp_path):
     with pytest.raises(FileNotFoundError):
         AudioConverter().convert_to_aac(
             str(tmp_path / "missing.m4a"), str(tmp_path / "output.aac"), "128K"
         )
 
 
-def test_convert_to_aac_rejects_invalid_quality(tmp_path):
+@patch("audio_converter.FFmpegManager.resolve", return_value="ffmpeg")
+def test_convert_to_aac_rejects_invalid_quality(_resolve, tmp_path):
     source = tmp_path / "input.m4a"
     source.write_bytes(b"audio")
 
@@ -57,7 +61,8 @@ def test_convert_to_aac_rejects_invalid_quality(tmp_path):
         AudioConverter().convert_to_aac(str(source), str(tmp_path / "output.aac"), "abc")
 
 
-def test_convert_to_aac_maps_missing_ffmpeg(tmp_path):
+@patch("audio_converter.FFmpegManager.resolve", return_value="ffmpeg")
+def test_convert_to_aac_maps_missing_ffmpeg(_resolve, tmp_path):
     source = tmp_path / "input.m4a"
     source.write_bytes(b"audio")
 
@@ -66,7 +71,8 @@ def test_convert_to_aac_maps_missing_ffmpeg(tmp_path):
             AudioConverter().convert_to_aac(str(source), str(tmp_path / "output.aac"))
 
 
-def test_convert_to_aac_maps_ffmpeg_failure(tmp_path):
+@patch("audio_converter.FFmpegManager.resolve", return_value="ffmpeg")
+def test_convert_to_aac_maps_ffmpeg_failure(_resolve, tmp_path):
     source = tmp_path / "input.m4a"
     source.write_bytes(b"audio")
     error = __import__("subprocess").CalledProcessError(1, ["ffmpeg"], stderr="falha")
@@ -82,9 +88,10 @@ def test_legacy_convert_audio_delegates_aac(tmp_path):
     source.write_bytes(b"audio")
 
     with patch.object(AudioConverter, "convert_to_aac", return_value=str(output)) as convert:
-        result = __import__("audio_converter").convert_audio(
-            str(source), str(output), "aac", 128
-        )
+        with patch("audio_converter.FFmpegManager.resolve", return_value="ffmpeg"):
+            result = __import__("audio_converter").convert_audio(
+                str(source), str(output), "aac", 128
+            )
 
     assert result == str(output)
     convert.assert_called_once_with(str(source), str(output), 128)
