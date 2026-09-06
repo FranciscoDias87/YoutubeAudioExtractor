@@ -13,7 +13,12 @@ LOG_FILENAME = "youtube_audio_extractor.log"
 
 
 def configure_logging(log_directory: Optional[str] = None, level: int = logging.INFO) -> logging.Logger:
-    """Configure application logging once and return the application logger."""
+    """Configure application logging once and return the application logger.
+
+    Console output remains available during development, while a rotating file
+    keeps a persistent diagnostic history for packaged/desktop executions.
+    Repeated calls do not add duplicate handlers.
+    """
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(level)
     logger.propagate = False
