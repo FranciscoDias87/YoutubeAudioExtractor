@@ -1,12 +1,10 @@
 """Controller that coordinates UI requests and background workers."""
 
-import logging
-
 from PyQt5.QtCore import QObject, pyqtSignal
 
+from app.logging_config import get_logger
 from app.services.youtube_service import YouTubeService
 from app.workers.download_worker import DownloadWorker, MetadataWorker
-from app.logging_config import get_logger
 
 
 logger = get_logger("controller")
