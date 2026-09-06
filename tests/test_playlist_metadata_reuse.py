@@ -18,12 +18,19 @@ def test_playlist_reuses_metadata_without_second_extract_info(tmp_path):
 
     with patch("app.services.youtube_service.yt_dlp.YoutubeDL", return_value=fake_ydl) as ydl_cls:
         service = YouTubeService(str(tmp_path))
-        result = service.extract_audio(
-            "https://www.youtube.com/watch?v=one&list=PLTEST",
-            format="mp3",
-            quality="128K",
-            metadata=metadata,
-        )
+        # O download real é responsabilidade do yt-dlp. Neste teste, isolamos essa parte
+        # e simulamos a descoberta do arquivo produzido no diretório temporário da faixa.
+        with patch.object(
+            service.file_manager,
+            "list_files",
+            side_effect=lambda directory, extensions: [f"{directory}/track.mp3"],
+        ), patch("app.services.youtube_service.shutil.move"):
+            result = service.extract_audio(
+                "https://www.youtube.com/watch?v=one&list=PLTEST",
+                format="mp3",
+                quality="128K",
+                metadata=metadata,
+            )
 
     assert result["success"] is True
     assert result["playlist_count"] == 2

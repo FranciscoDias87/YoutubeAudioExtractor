@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import subprocess
 import time
 from typing import Callable, Optional
@@ -11,7 +12,6 @@ from typing import Callable, Optional
 import yt_dlp
 
 from file_manager import FileManager
-
 from app.logging_config import get_logger
 
 
@@ -27,6 +27,7 @@ class YouTubeService:
 
     SUPPORTED_FORMATS = {"mp3", "aac", "wav", "flac", "m4a"}
     SUPPORTED_QUALITIES = {"64", "128", "192", "320", "64K", "128K", "192K", "320K"}
+    INTERMEDIATE_EXTENSIONS = {".m4a", ".webm", ".opus", ".mp3", ".wav", ".flac"}
 
     def __init__(self, output_directory: Optional[str] = None):
         self.file_manager = FileManager(output_directory)
@@ -57,44 +58,21 @@ class YouTubeService:
     def _ffmpeg_aac(input_path: str, output_path: str, quality: str) -> None:
         bitrate = YouTubeService._normalize_quality(quality).lower()
         command = ["ffmpeg", "-y", "-i", input_path, "-vn", "-c:a", "aac", "-b:a", bitrate, "-f", "adts", output_path]
-        subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        subprocess.run(command, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     @staticmethod
     def _check_cancel(cancellation_callback: Optional[Callable[[], bool]]) -> None:
         if cancellation_callback and cancellation_callback():
             raise DownloadCancelled()
 
-    def extract_audio(
-        self,
-        url: str,
-        format: str = "mp3",
-        quality: str = "128K",
-        progress_callback: Optional[Callable[[dict], None]] = None,
-        cancellation_callback: Optional[Callable[[], bool]] = None,
-        metadata: Optional[dict] = None,
-    ) -> dict:
-        """Extract audio from a single video or playlist.
-
-        ``metadata`` may contain the result previously produced by MetadataWorker.
-        For playlists this avoids a second, potentially very expensive, playlist
-        discovery pass.
-        """
+    def extract_audio(self, url: str, format: str = "mp3", quality: str = "128K",
+                      progress_callback: Optional[Callable[[dict], None]] = None,
+                      cancellation_callback: Optional[Callable[[], bool]] = None,
+                      metadata: Optional[dict] = None) -> dict:
         started_at = time.perf_counter()
         url = (url or "").strip()
         format = (format or "mp3").lower().strip()
-        logger.info(
-            "extract_audio() iniciado | formato=%s | qualidade=%s | metadata_reutilizado=%s",
-            format,
-            quality,
-            metadata is not None,
-        )
+        logger.info("extract_audio() iniciado | formato=%s | qualidade=%s | metadata_reutilizado=%s", format, quality, metadata is not None)
         if not url:
             return {"success": False, "error": "URL não informada."}
         if format not in self.SUPPORTED_FORMATS:
@@ -132,67 +110,58 @@ class YouTubeService:
             logger.exception("Erro após %.2fs: %s", time.perf_counter() - started_at, exc)
             return {"success": False, "error": str(exc), "message": "Erro na extração."}
 
-    def _build_options(self, output_template, format, quality, noplaylist, progress_hook):
-        options = {
+    @staticmethod
+    def _build_options(output_template, format, quality, noplaylist, progress_hook):
+        return {
             "format": "bestaudio/best",
-            "postprocessors": [self._postprocessor_options(format, quality)],
-            "outtmpl": output_template,
+            "postprocessors": [YouTubeService._postprocessor_options(format, quality)],
+            "outtmpl": {"default": output_template},
             "noplaylist": noplaylist,
             "progress_hooks": [progress_hook],
-        }
-        options.update(self._postprocessor_args(format))
-        return options
+        } | YouTubeService._postprocessor_args(format)
 
     def _download_video(self, url, info, format, quality, progress_callback, cancellation_callback=None):
         started_at = time.perf_counter()
         title = info.get("title", "Unknown Video")
         author = info.get("uploader", "Unknown")
         hook_state = {"last_status": None}
+        temp_dir = self.file_manager.create_temp_directory(".yte-video-")
+        try:
+            def hook(data):
+                self._check_cancel(cancellation_callback)
+                status = data.get("status")
+                if status != hook_state["last_status"]:
+                    hook_state["last_status"] = status
+                    logger.debug("yt-dlp hook | status=%s | arquivo=%s", status, data.get("filename"))
+                if progress_callback:
+                    progress_callback(data)
 
-        def hook(data):
+            options = self._build_options(os.path.join(temp_dir, "%(title)s.%(ext)s"), format, quality, True, hook)
+            with yt_dlp.YoutubeDL(options) as ydl:
+                ydl.download([url])
             self._check_cancel(cancellation_callback)
-            status = data.get("status")
-            if status != hook_state["last_status"]:
-                hook_state["last_status"] = status
-                logger.debug("yt-dlp hook | status=%s | arquivo=%s", status, data.get("filename"))
-            if progress_callback:
-                progress_callback(data)
 
-        final_filename = self.file_manager.generate_filename(title, format)
-        final_path = os.path.join(self.file_manager.base_directory, final_filename)
-        options = self._build_options(os.path.join(self.file_manager.base_directory, "%(title)s.%(ext)s"), format, quality, True, hook)
-        with yt_dlp.YoutubeDL(options) as ydl:
-            ydl.download([url])
-        self._check_cancel(cancellation_callback)
+            candidates = self.file_manager.list_files(temp_dir, self.INTERMEDIATE_EXTENSIONS)
+            if not candidates:
+                raise FileNotFoundError("Arquivo de áudio baixado não foi encontrado no diretório temporário.")
+            if len(candidates) > 1:
+                logger.warning("Mais de um arquivo intermediário encontrado no download isolado: %s", candidates)
+            source = candidates[0]
+            final_path = self.file_manager.get_unique_output_path(title, format)
+            final_filename = os.path.basename(final_path)
 
-        if format == "aac":
-            intermediate = self._find_downloaded_file(title, {".m4a", ".webm", ".opus", ".mp3", ".wav", ".flac"})
-            if not intermediate:
-                raise FileNotFoundError("Arquivo intermediário de áudio não encontrado para conversão AAC.")
-            self._ffmpeg_aac(intermediate, final_path, quality)
-            if os.path.abspath(intermediate) != os.path.abspath(final_path):
-                os.remove(intermediate)
-        else:
-            candidates = [os.path.join(self.file_manager.base_directory, name) for name in os.listdir(self.file_manager.base_directory) if name.startswith(title) and name.lower().endswith(f".{format}")]
-            if candidates:
-                source = candidates[0]
-                if os.path.abspath(source) != os.path.abspath(final_path):
-                    renamed = self.file_manager.rename_file(source, title, format)
-                    if renamed:
-                        final_path = renamed
-                        final_filename = os.path.basename(renamed)
+            if format == "aac":
+                self._ffmpeg_aac(source, final_path, quality)
+            else:
+                shutil.move(source, final_path)
 
-        artist, song = self.file_manager.extract_artist_and_song(title)
-        logger.info("_download_video() concluído em %.2fs", time.perf_counter() - started_at)
-        return {"success": True, "type": "video", "video_title": title, "video_author": author, "artist": artist, "song": song, "filename": final_filename, "full_path": final_path, "format": format, "quality": quality, "message": "Áudio extraído com sucesso!"}
-
-    def _find_downloaded_file(self, title: str, extensions: set[str]) -> Optional[str]:
-        matches = []
-        for name in os.listdir(self.file_manager.base_directory):
-            path = os.path.join(self.file_manager.base_directory, name)
-            if os.path.isfile(path) and name.startswith(title) and os.path.splitext(name)[1].lower() in extensions:
-                matches.append(path)
-        return matches[0] if matches else None
+            artist, song = self.file_manager.extract_artist_and_song(title)
+            logger.info("_download_video() concluído em %.2fs | arquivo=%s", time.perf_counter() - started_at, final_path)
+            return {"success": True, "type": "video", "video_title": title, "video_author": author,
+                    "artist": artist, "song": song, "filename": final_filename, "full_path": final_path,
+                    "format": format, "quality": quality, "message": "Áudio extraído com sucesso!"}
+        finally:
+            self.file_manager.cleanup_directory(temp_dir)
 
     def _download_playlist(self, url, info, format, quality, progress_callback, cancellation_callback=None):
         started_at = time.perf_counter()
@@ -215,8 +184,7 @@ class YouTubeService:
             index = info_dict.get("playlist_index") or data.get("playlist_index") or 0
             total = info_dict.get("n_entries") or data.get("n_entries") or playlist_total
             try:
-                index = int(index)
-                total = int(total)
+                index, total = int(index), int(total)
             except (TypeError, ValueError):
                 index, total = 0, playlist_total
             item_percent = self._percent(data)
@@ -232,39 +200,37 @@ class YouTubeService:
             if progress_callback:
                 progress_callback(enriched)
 
-        options = self._build_options(os.path.join(playlist_path, "%(title)s.%(ext)s"), format, quality, True, hook)
-        logger.debug("_download_playlist(): processando entries previamente extraídas; nenhuma nova descoberta da playlist será feita.")
         download_started = time.perf_counter()
-        with yt_dlp.YoutubeDL(options) as ydl:
+        with yt_dlp.YoutubeDL(self._build_options(os.path.join(playlist_path, "%(title)s.%(ext)s"), format, quality, True, hook)) as ydl:
             for position, entry in enumerate(entries, start=1):
                 self._check_cancel(cancellation_callback)
                 entry = dict(entry)
                 entry["playlist_index"] = entry.get("playlist_index") or position
                 entry["playlist_count"] = playlist_total
                 entry["n_entries"] = playlist_total
-                logger.debug("_download_playlist(): process_ie_result() faixa=%s/%s", position, playlist_total)
-                ydl.process_ie_result(
-                    entry,
-                    download=True,
-                    extra_info={
-                        "playlist": playlist_title,
-                        "playlist_index": position,
-                        "playlist_autonumber": position,
-                        "n_entries": playlist_total,
-                    },
-                )
+                temp_dir = self.file_manager.create_temp_directory(f".yte-playlist-{position:04d}-")
+                try:
+                    options = self._build_options(os.path.join(temp_dir, "%(title)s.%(ext)s"), format, quality, True, hook)
+                    ydl.params.update(options)
+                    logger.debug("_download_playlist(): process_ie_result() faixa=%s/%s", position, playlist_total)
+                    ydl.process_ie_result(entry, download=True, extra_info={"playlist": playlist_title,
+                        "playlist_index": position, "playlist_autonumber": position, "n_entries": playlist_total})
+                    candidates = self.file_manager.list_files(temp_dir, self.INTERMEDIATE_EXTENSIONS)
+                    if not candidates:
+                        raise FileNotFoundError(f"Arquivo da faixa {position} não foi encontrado no diretório temporário.")
+                    source = candidates[0]
+                    title = entry.get("title") or (entry.get("webpage_url_basename") or f"Faixa {position}")
+                    final_path = self.file_manager.get_unique_output_path(title, format, playlist_path)
+                    if format == "aac":
+                        self._ffmpeg_aac(source, final_path, quality)
+                    else:
+                        shutil.move(source, final_path)
+                finally:
+                    self.file_manager.cleanup_directory(temp_dir)
+
         logger.info("_download_playlist(): processamento concluído em %.2fs", time.perf_counter() - download_started)
         self._check_cancel(cancellation_callback)
-
-        if format == "aac":
-            for name in os.listdir(playlist_path):
-                self._check_cancel(cancellation_callback)
-                source = os.path.join(playlist_path, name)
-                if not os.path.isfile(source) or os.path.splitext(name)[1].lower() not in {".m4a", ".webm", ".opus", ".mp3", ".wav", ".flac"}:
-                    continue
-                output = os.path.splitext(source)[0] + ".aac"
-                self._ffmpeg_aac(source, output, quality)
-                os.remove(source)
-
         logger.info("_download_playlist() concluído em %.2fs", time.perf_counter() - started_at)
-        return {"success": True, "type": "playlist", "playlist_title": playlist_title, "playlist_count": playlist_total, "playlist_path": playlist_path, "format": format, "quality": quality, "message": "Playlist baixada com sucesso!"}
+        return {"success": True, "type": "playlist", "playlist_title": playlist_title,
+                "playlist_count": playlist_total, "playlist_path": playlist_path,
+                "format": format, "quality": quality, "message": "Playlist baixada com sucesso!"}
