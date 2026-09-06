@@ -110,14 +110,15 @@ class YouTubeService:
             logger.exception("Erro após %.2fs: %s", time.perf_counter() - started_at, exc)
             return {"success": False, "error": str(exc), "message": "Erro na extração."}
 
-    def _build_options(self, output_template, format, quality, noplaylist, progress_hook):
+    @staticmethod
+    def _build_options(output_template, format, quality, noplaylist, progress_hook):
         return {
             "format": "bestaudio/best",
-            "postprocessors": [self._postprocessor_options(format, quality)],
+            "postprocessors": [YouTubeService._postprocessor_options(format, quality)],
             "outtmpl": {"default": output_template},
             "noplaylist": noplaylist,
             "progress_hooks": [progress_hook],
-        } | self._postprocessor_args(format)
+        } | YouTubeService._postprocessor_args(format)
 
     def _download_video(self, url, info, format, quality, progress_callback, cancellation_callback=None):
         started_at = time.perf_counter()
