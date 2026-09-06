@@ -42,6 +42,18 @@ def test_ffmpeg_aac_uses_utf8_with_replacement_on_windows():
     assert kwargs == {"check": True, "capture_output": True, "text": True, "encoding": "utf-8", "errors": "replace"}
 
 
+def test_build_options_uses_named_outtmpl_for_yt_dlp_process_ie_result():
+    options = YouTubeService._build_options(
+        r"C:\Audio\%(title)s.%(ext)s",
+        "mp3",
+        "128K",
+        True,
+        lambda _data: None,
+    )
+
+    assert options["outtmpl"] == {"default": r"C:\Audio\%(title)s.%(ext)s"}
+
+
 def test_invalid_url_is_rejected(tmp_path):
     service = YouTubeService(str(tmp_path))
     result = service.extract_audio("")
