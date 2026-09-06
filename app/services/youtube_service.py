@@ -114,7 +114,7 @@ class YouTubeService:
         return {
             "format": "bestaudio/best",
             "postprocessors": [self._postprocessor_options(format, quality)],
-            "outtmpl": output_template,
+            "outtmpl": {"default": output_template},
             "noplaylist": noplaylist,
             "progress_hooks": [progress_hook],
         } | self._postprocessor_args(format)
@@ -209,8 +209,6 @@ class YouTubeService:
                 entry["n_entries"] = playlist_total
                 temp_dir = self.file_manager.create_temp_directory(f".yte-playlist-{position:04d}-")
                 try:
-                    # Cada faixa recebe seu próprio diretório temporário. Assim, nenhum arquivo
-                    # antigo ou duplicado existente na pasta da playlist pode ser confundido com a saída atual.
                     options = self._build_options(os.path.join(temp_dir, "%(title)s.%(ext)s"), format, quality, True, hook)
                     ydl.params.update(options)
                     logger.debug("_download_playlist(): process_ie_result() faixa=%s/%s", position, playlist_total)
