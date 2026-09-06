@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import subprocess
 import time
 from typing import Callable, Optional
 
 import yt_dlp
 
+from audio_converter import AudioConverter
 from file_manager import FileManager
 from app.logging_config import get_logger
 
@@ -29,8 +29,9 @@ class YouTubeService:
     SUPPORTED_QUALITIES = {"64", "128", "192", "320", "64K", "128K", "192K", "320K"}
     INTERMEDIATE_EXTENSIONS = {".m4a", ".webm", ".opus", ".mp3", ".wav", ".flac"}
 
-    def __init__(self, output_directory: Optional[str] = None):
+    def __init__(self, output_directory: Optional[str] = None, audio_converter: Optional[AudioConverter] = None):
         self.file_manager = FileManager(output_directory)
+        self.audio_converter = audio_converter or AudioConverter()
 
     @staticmethod
     def _normalize_quality(quality: str) -> str:
@@ -53,12 +54,6 @@ class YouTubeService:
     @staticmethod
     def _postprocessor_args(audio_format: str) -> dict:
         return {}
-
-    @staticmethod
-    def _ffmpeg_aac(input_path: str, output_path: str, quality: str) -> None:
-        bitrate = YouTubeService._normalize_quality(quality).lower()
-        command = ["ffmpeg", "-y", "-i", input_path, "-vn", "-c:a", "aac", "-b:a", bitrate, "-f", "adts", output_path]
-        subprocess.run(command, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     @staticmethod
     def _check_cancel(cancellation_callback: Optional[Callable[[], bool]]) -> None:
@@ -120,6 +115,10 @@ class YouTubeService:
             "progress_hooks": [progress_hook],
         } | YouTubeService._postprocessor_args(format)
 
+    def _convert_aac(self, source: str, destination: str, quality: str) -> str:
+        logger.info("Delegando conversão AAC ao AudioConverter | origem=%s | destino=%s | qualidade=%s", source, destination, quality)
+        return self.audio_converter.convert_to_aac(source, destination, quality)
+
     def _download_video(self, url, info, format, quality, progress_callback, cancellation_callback=None):
         started_at = time.perf_counter()
         title = info.get("title", "Unknown Video")
@@ -151,7 +150,7 @@ class YouTubeService:
             final_filename = os.path.basename(final_path)
 
             if format == "aac":
-                self._ffmpeg_aac(source, final_path, quality)
+                self._convert_aac(source, final_path, quality)
             else:
                 shutil.move(source, final_path)
 
@@ -222,7 +221,7 @@ class YouTubeService:
                     title = entry.get("title") or (entry.get("webpage_url_basename") or f"Faixa {position}")
                     final_path = self.file_manager.get_unique_output_path(title, format, playlist_path)
                     if format == "aac":
-                        self._ffmpeg_aac(source, final_path, quality)
+                        self._convert_aac(source, final_path, quality)
                     else:
                         shutil.move(source, final_path)
                 finally:

@@ -27,21 +27,6 @@ def test_aac_has_no_yt_dlp_container_override():
     assert YouTubeService._postprocessor_args("aac") == {}
 
 
-def test_ffmpeg_aac_uses_utf8_with_replacement_on_windows():
-    with patch("app.services.youtube_service.subprocess.run") as run:
-        YouTubeService._ffmpeg_aac("input.m4a", "output.aac", "128K")
-
-    run.assert_called_once()
-    command = run.call_args.args[0]
-    kwargs = run.call_args.kwargs
-    assert command[:2] == ["ffmpeg", "-y"]
-    assert "-c:a" in command
-    assert command[command.index("-c:a") + 1] == "aac"
-    assert "-f" in command
-    assert command[command.index("-f") + 1] == "adts"
-    assert kwargs == {"check": True, "capture_output": True, "text": True, "encoding": "utf-8", "errors": "replace"}
-
-
 def test_build_options_uses_named_outtmpl_for_yt_dlp_process_ie_result():
     options = YouTubeService._build_options(
         r"C:\Audio\%(title)s.%(ext)s",
@@ -131,4 +116,37 @@ def test_download_video_uses_isolated_directory_instead_of_scanning_base(tmp_pat
     assert result["filename"] == "Artist - Song.mp3"
     list_files.assert_called_once()
     assert os.path.normcase(list_files.call_args.args[0]) == os.path.normcase(str(temp_dir))
+    assert not temp_dir.exists()
+
+
+def test_download_video_delegates_aac_conversion_to_audio_converter(tmp_path):
+    service = YouTubeService(str(tmp_path))
+    temp_dir = tmp_path / ".yte-video-aac"
+    temp_dir.mkdir()
+    source = temp_dir / "Artist - Song.m4a"
+    source.write_bytes(b"audio")
+    fake_ydl = MagicMock()
+    fake_ydl.__enter__.return_value = fake_ydl
+    fake_ydl.__exit__.return_value = False
+
+    fake_converter = MagicMock()
+    fake_converter.convert_to_aac.return_value = str(tmp_path / "Artist - Song.aac")
+    service.audio_converter = fake_converter
+
+    def fake_download(_urls):
+        source.write_bytes(b"audio")
+
+    fake_ydl.download.side_effect = fake_download
+    info = {"title": "Artist - Song", "uploader": "Artist"}
+
+    with patch.object(service.file_manager, "create_temp_directory", return_value=str(temp_dir)):
+        with patch("app.services.youtube_service.yt_dlp.YoutubeDL", return_value=fake_ydl):
+            result = service._download_video("https://www.youtube.com/watch?v=test", info, "aac", "128K", None)
+
+    assert result["success"] is True
+    fake_converter.convert_to_aac.assert_called_once_with(
+        str(source), result["full_path"], "128K"
+    )
+    assert result["format"] == "aac"
+    assert result["filename"].endswith(".aac")
     assert not temp_dir.exists()
