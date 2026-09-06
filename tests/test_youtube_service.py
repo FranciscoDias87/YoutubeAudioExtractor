@@ -27,6 +27,28 @@ def test_aac_has_no_yt_dlp_container_override():
     assert YouTubeService._postprocessor_args("aac") == {}
 
 
+def test_ffmpeg_aac_uses_utf8_with_replacement_on_windows():
+    with patch("app.services.youtube_service.subprocess.run") as run:
+        YouTubeService._ffmpeg_aac("input.m4a", "output.aac", "128K")
+
+    run.assert_called_once()
+    command = run.call_args.args[0]
+    kwargs = run.call_args.kwargs
+
+    assert command[:2] == ["ffmpeg", "-y"]
+    assert "-c:a" in command
+    assert command[command.index("-c:a") + 1] == "aac"
+    assert "-f" in command
+    assert command[command.index("-f") + 1] == "adts"
+    assert kwargs == {
+        "check": True,
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+    }
+
+
 def test_invalid_url_is_rejected(tmp_path):
     service = YouTubeService(str(tmp_path))
     result = service.extract_audio("")
