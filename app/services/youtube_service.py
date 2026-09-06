@@ -56,7 +56,14 @@ class YouTubeService:
     def _ffmpeg_aac(input_path: str, output_path: str, quality: str) -> None:
         bitrate = YouTubeService._normalize_quality(quality).lower()
         command = ["ffmpeg", "-y", "-i", input_path, "-vn", "-c:a", "aac", "-b:a", bitrate, "-f", "adts", output_path]
-        subprocess.run(command, check=True, capture_output=True, text=True)
+        subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
 
     @staticmethod
     def _check_cancel(cancellation_callback: Optional[Callable[[], bool]]) -> None:
@@ -214,7 +221,7 @@ class YouTubeService:
                 _trace(f"yt-dlp playlist hook | status={status} | faixa={index}/{total} | item={item_percent}% | overall={overall_percent}%")
             if status == "downloading" and not hook_state["first_downloading"]:
                 hook_state["first_downloading"] = True
-                _trace(f"PRIMEIRO DOWNLOAD EFETIVO INICIADO | faixa={index}/{total}")
+                _trace(f"PRIMEIRO DOWNLOAD EFETIVO INICIADO | faixa={index}/{playlist_total}")
             enriched.update({"playlist_index": index, "playlist_total": total, "item_percent": item_percent, "overall_percent": overall_percent})
             if progress_callback:
                 progress_callback(enriched)
