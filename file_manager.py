@@ -44,13 +44,13 @@ class FileManager:
     def list_files(self, directory_path, extensions=None):
         """Lista somente arquivos do diretório informado, sem varrer diretórios externos."""
         allowed = {ext.lower() if ext.startswith(".") else f".{ext.lower()}" for ext in (extensions or self.AUDIO_EXTENSIONS)}
-        if not os.path.isdir(directory_path):
+        directory = Path(directory_path)
+        if not directory.is_dir():
             return []
         return [
-            os.path.join(directory_path, name)
-            for name in os.listdir(directory_path)
-            if os.path.isfile(os.path.join(directory_path, name))
-            and os.path.splitext(name)[1].lower() in allowed
+            str(path)
+            for path in directory.iterdir()
+            if path.is_file() and path.suffix.lower() in allowed
         ]
 
     def get_unique_path(self, directory_path, filename):
