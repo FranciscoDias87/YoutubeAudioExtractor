@@ -28,6 +28,13 @@ def test_locate_prefers_bundled_ffmpeg_over_system(tmp_path):
         assert manager.locate() == str(bundled.resolve())
 
 
+def test_default_application_root_uses_pyinstaller_meipass():
+    with patch("app.services.ffmpeg_manager.sys.frozen", True, create=True), patch(
+        "app.services.ffmpeg_manager.sys._MEIPASS", r"C:\\Temp\\_MEI12345", create=True
+    ):
+        assert FFmpegManager._default_application_root() == Path(r"C:\\Temp\\_MEI12345")
+
+
 def test_locate_falls_back_to_system_path(tmp_path):
     manager = FFmpegManager(application_root=str(tmp_path))
 
