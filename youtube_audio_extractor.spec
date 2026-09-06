@@ -120,6 +120,7 @@ if hasattr(exe, 'manifest'):
     <security>
       <requestedPrivileges>
         <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
     </security>
   </trustInfo>
 </assembly>"""
