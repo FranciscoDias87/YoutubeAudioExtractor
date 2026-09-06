@@ -92,82 +92,61 @@ def test_single_video_reuses_metadata_without_second_extract_info(tmp_path):
     assert download_video.call_args.args[1] is metadata
 
 
-def test_service_accepts_injected_audio_converter(tmp_path):
-    converter = MagicMock()
-    service = YouTubeService(str(tmp_path), audio_converter=converter)
-
-    assert service.audio_converter is converter
-
-
-def test_convert_aac_delegates_to_audio_converter(tmp_path):
-    converter = MagicMock()
-    converter.convert_to_aac.return_value = str(tmp_path / "output.aac")
-    service = YouTubeService(str(tmp_path), audio_converter=converter)
-
-    result = service._convert_aac(
-        str(tmp_path / "input.m4a"),
-        str(tmp_path / "output.aac"),
-        "128K",
-    )
-
-    assert result == str(tmp_path / "output.aac")
-    converter.convert_to_aac.assert_called_once_with(
-        str(tmp_path / "input.m4a"),
-        str(tmp_path / "output.aac"),
-        "128K",
-    )
-
-
-def test_download_video_uses_audio_converter_for_aac(tmp_path):
-    service = YouTubeService(str(tmp_path), audio_converter=MagicMock())
+def test_download_video_uses_isolated_directory_instead_of_scanning_base(tmp_path):
+    service = YouTubeService(str(tmp_path))
     temp_dir = tmp_path / ".yte-video-test"
     temp_dir.mkdir()
-    source = temp_dir / "Artist - Song.m4a"
-    source.write_bytes(b"audio")
-
     fake_ydl = MagicMock()
     fake_ydl.__enter__.return_value = fake_ydl
     fake_ydl.__exit__.return_value = False
 
     def fake_download(_urls):
-        return None
+        (temp_dir / "Artist - Song.mp3").write_bytes(b"audio")
 
     fake_ydl.download.side_effect = fake_download
     info = {"title": "Artist - Song", "uploader": "Artist"}
-    service.audio_converter.convert_to_aac.return_value = str(tmp_path / "Artist - Song.aac")
+
+    with patch.object(service.file_manager, "create_temp_directory", return_value=str(temp_dir)):
+        with patch("app.services.youtube_service.yt_dlp.YoutubeDL", return_value=fake_ydl):
+            with patch.object(service.file_manager, "list_files", wraps=service.file_manager.list_files) as list_files:
+                result = service._download_video("https://www.youtube.com/watch?v=test", info, "mp3", "128K", None)
+
+    assert result["success"] is True
+    assert os.path.exists(result["full_path"])
+    assert result["filename"] == "Artist - Song.mp3"
+    list_files.assert_called_once()
+    assert os.path.normcase(list_files.call_args.args[0]) == os.path.normcase(str(temp_dir))
+    assert not temp_dir.exists()
+
+
+def test_download_video_delegates_aac_conversion_to_audio_converter(tmp_path):
+    service = YouTubeService(str(tmp_path))
+    temp_dir = tmp_path / ".yte-video-aac"
+    temp_dir.mkdir()
+    source = temp_dir / "Artist - Song.m4a"
+    source.write_bytes(b"audio")
+    fake_ydl = MagicMock()
+    fake_ydl.__enter__.return_value = fake_ydl
+    fake_ydl.__exit__.return_value = False
+
+    fake_converter = MagicMock()
+    fake_converter.convert_to_aac.return_value = str(tmp_path / "Artist - Song.aac")
+    service.audio_converter = fake_converter
+
+    def fake_download(_urls):
+        source.write_bytes(b"audio")
+
+    fake_ydl.download.side_effect = fake_download
+    info = {"title": "Artist - Song", "uploader": "Artist"}
 
     with patch.object(service.file_manager, "create_temp_directory", return_value=str(temp_dir)):
         with patch("app.services.youtube_service.yt_dlp.YoutubeDL", return_value=fake_ydl):
             result = service._download_video("https://www.youtube.com/watch?v=test", info, "aac", "128K", None)
 
     assert result["success"] is True
-    service.audio_converter.convert_to_aac.assert_called_once()
-    call_args = service.audio_converter.convert_to_aac.call_args.args
-    assert call_args[0] == str(source)
-    assert call_args[1].endswith("Artist - Song.aac")
-    assert call_args[2] == "128K"
-    assert not temp_dir.exists()
-
-
-def test_download_video_keeps_shutil_move_for_non_aac(tmp_path):
-    service = YouTubeService(str(tmp_path), audio_converter=MagicMock())
-    temp_dir = tmp_path / ".yte-video-test"
-    temp_dir.mkdir()
-    source = temp_dir / "Artist - Song.mp3"
-    source.write_bytes(b"audio")
-
-    fake_ydl = MagicMock()
-    fake_ydl.__enter__.return_value = fake_ydl
-    fake_ydl.__exit__.return_value = False
-    fake_ydl.download.side_effect = lambda _urls: None
-    info = {"title": "Artist - Song", "uploader": "Artist"}
-
-    with patch.object(service.file_manager, "create_temp_directory", return_value=str(temp_dir)):
-        with patch("app.services.youtube_service.yt_dlp.YoutubeDL", return_value=fake_ydl):
-            result = service._download_video("https://www.youtube.com/watch?v=test", info, "mp3", "128K", None)
-
-    assert result["success"] is True
-    service.audio_converter.convert_to_aac.assert_not_called()
-    assert os.path.exists(result["full_path"])
-    assert result["filename"] == "Artist - Song.mp3"
+    fake_converter.convert_to_aac.assert_called_once_with(
+        str(source), result["full_path"], "128K"
+    )
+    assert result["format"] == "aac"
+    assert result["filename"].endswith(".aac")
     assert not temp_dir.exists()
