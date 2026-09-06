@@ -1,13 +1,13 @@
 """Prepare the pinned FFmpeg Windows dependency for packaging.
 
-The script downloads a pinned LGPL static build, verifies its SHA-256 digest,
-extracts ffmpeg.exe/ffprobe.exe and validates ffmpeg.exe before PyInstaller.
+The build uses a reproducible LGPL static FFmpeg artifact. The archive is
+verified by SHA-256 before extraction and ffmpeg.exe is validated before
+PyInstaller packages the application.
 """
 from __future__ import annotations
 
 import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -18,14 +18,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "ffmpeg"
-VERSION = "n9.0-latest-win64-lgpl-9.0"
+RELEASE_TAG = "autobuild-2026-08-29-13-12"
+ARCHIVE_NAME = "ffmpeg-n9.0.1-11-ge47273f4d9-win64-lgpl-9.0.zip"
 URL = (
     "https://github.com/BtbN/FFmpeg-Builds/releases/download/"
-    f"latest/ffmpeg-{VERSION}.zip"
+    f"{RELEASE_TAG}/{ARCHIVE_NAME}"
 )
-# The checksum is intentionally required to be supplied from the pinned
-# release checksums file before a release build. Do not weaken this check.
-EXPECTED_SHA256 = os.environ.get("YOUTUBE_AUDIO_EXTRACTOR_FFMPEG_SHA256", "").strip().lower()
+EXPECTED_SHA256 = "f43aaeb86d05b453f3909d0d1eed39a51db71d387c21a3605676c1d1627084d9"
 
 
 def sha256(path: Path) -> str:
@@ -55,17 +54,12 @@ def validate(path: Path) -> str:
 def main() -> int:
     if sys.platform != "win32":
         raise SystemExit("A preparação atual do FFmpeg é destinada ao Windows x64.")
-    if not EXPECTED_SHA256:
-        raise SystemExit(
-            "Defina YOUTUBE_AUDIO_EXTRACTOR_FFMPEG_SHA256 com o SHA-256 do "
-            "artefato FFmpeg pinado antes de executar o build."
-        )
 
     OUTPUT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="yte-ffmpeg-") as temp_dir:
         temp = Path(temp_dir)
-        archive = temp / "ffmpeg.zip"
-        print(f"Baixando FFmpeg: {URL}")
+        archive = temp / ARCHIVE_NAME
+        print(f"Baixando FFmpeg pinado: {URL}")
         urllib.request.urlretrieve(URL, archive)
 
         actual = sha256(archive)
@@ -83,6 +77,7 @@ def main() -> int:
             raise SystemExit("O pacote FFmpeg não contém ffmpeg.exe.")
         ffmpeg = candidates[0]
         ffprobe_candidates = list(extract.rglob("ffprobe.exe"))
+        license_candidates = list(extract.rglob("LICENSE.txt"))
 
         for filename in ("ffmpeg.exe", "ffprobe.exe", "LICENSE.txt"):
             target = OUTPUT / filename
@@ -92,15 +87,14 @@ def main() -> int:
         shutil.copy2(ffmpeg, OUTPUT / "ffmpeg.exe")
         if ffprobe_candidates:
             shutil.copy2(ffprobe_candidates[0], OUTPUT / "ffprobe.exe")
-
-        license_candidates = list(extract.rglob("LICENSE.txt"))
         if license_candidates:
             shutil.copy2(license_candidates[0], OUTPUT / "LICENSE.txt")
 
     version = validate(OUTPUT / "ffmpeg.exe")
     manifest = {
         "source": "BtbN/FFmpeg-Builds",
-        "version": VERSION,
+        "release_tag": RELEASE_TAG,
+        "archive": ARCHIVE_NAME,
         "url": URL,
         "archive_sha256": EXPECTED_SHA256,
         "ffmpeg_version": version,
