@@ -1,5 +1,6 @@
 from pathlib import Path
 from unittest.mock import patch
+import subprocess
 
 import pytest
 
@@ -21,13 +22,21 @@ def test_convert_to_aac_builds_expected_ffmpeg_command(_resolve, tmp_path):
         "ffmpeg", "-y", "-i", str(source), "-vn",
         "-c:a", "aac", "-b:a", "128k", "-f", "adts", str(output)
     ]
-    assert run.call_args.kwargs == {
-        "check": True,
-        "capture_output": True,
-        "text": True,
-        "encoding": "utf-8",
-        "errors": "replace",
-    }
+    kwargs = run.call_args.kwargs
+    assert kwargs["check"] is True
+    assert kwargs["capture_output"] is True
+    assert kwargs["text"] is True
+    assert kwargs["encoding"] == "utf-8"
+    assert kwargs["errors"] == "replace"
+    if __import__("os").name == "nt":
+        assert kwargs["creationflags"] == subprocess.CREATE_NO_WINDOW
+        startupinfo = kwargs["startupinfo"]
+        assert startupinfo is not None
+        assert startupinfo.dwFlags & subprocess.STARTF_USESHOWWINDOW
+        assert startupinfo.wShowWindow == subprocess.SW_HIDE
+    else:
+        assert kwargs["creationflags"] == 0
+        assert kwargs["startupinfo"] is None
 
 
 @patch("audio_converter.FFmpegManager.resolve", return_value="ffmpeg")
@@ -75,7 +84,7 @@ def test_convert_to_aac_maps_missing_ffmpeg(_resolve, tmp_path):
 def test_convert_to_aac_maps_ffmpeg_failure(_resolve, tmp_path):
     source = tmp_path / "input.m4a"
     source.write_bytes(b"audio")
-    error = __import__("subprocess").CalledProcessError(1, ["ffmpeg"], stderr="falha")
+    error = subprocess.CalledProcessError(1, ["ffmpeg"], stderr="falha")
 
     with patch("audio_converter.subprocess.run", side_effect=error):
         with pytest.raises(AudioConversionError, match="Falha ao converter áudio"):
