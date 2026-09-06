@@ -21,6 +21,16 @@ def test_configure_logging_creates_console_and_rotating_file_handler(tmp_path):
     assert "mensagem de teste" in log_path.read_text(encoding="utf-8")
 
 
+def test_configure_logging_does_not_duplicate_handlers(tmp_path):
+    logger = configure_logging(str(tmp_path), level=logging.DEBUG)
+    handler_count = len(logger.handlers)
+
+    same_logger = configure_logging(str(tmp_path), level=logging.DEBUG)
+
+    assert same_logger is logger
+    assert len(same_logger.handlers) == handler_count
+
+
 def test_get_logger_returns_named_child_logger():
     logger = get_logger("service")
     assert logger.name == "youtube_audio_extractor.service"
