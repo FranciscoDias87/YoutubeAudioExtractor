@@ -111,10 +111,12 @@ def test_download_video_uses_isolated_directory_instead_of_scanning_base(tmp_pat
 
     with patch.object(service.file_manager, "create_temp_directory", return_value=str(temp_dir)):
         with patch("app.services.youtube_service.yt_dlp.YoutubeDL", return_value=fake_ydl):
-            with patch("app.services.youtube_service.os.listdir", side_effect=AssertionError("base directory must not be scanned")):
+            with patch.object(service.file_manager, "list_files", wraps=service.file_manager.list_files) as list_files:
                 result = service._download_video("https://www.youtube.com/watch?v=test", info, "mp3", "128K", None)
 
     assert result["success"] is True
     assert os.path.exists(result["full_path"])
     assert result["filename"] == "Artist - Song.mp3"
+    list_files.assert_called_once()
+    assert os.path.normcase(list_files.call_args.args[0]) == os.path.normcase(str(temp_dir))
     assert not temp_dir.exists()
