@@ -1,15 +1,13 @@
 """Controller that coordinates UI requests and background workers."""
 
-from datetime import datetime
-
 from PyQt5.QtCore import QObject, pyqtSignal
 
+from app.logging_config import get_logger
 from app.services.youtube_service import YouTubeService
 from app.workers.download_worker import DownloadWorker, MetadataWorker
 
 
-def _trace(message):
-    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] [CONTROLLER] {message}", flush=True)
+logger = get_logger("controller")
 
 
 class DownloadController(QObject):
@@ -59,6 +57,7 @@ class DownloadController(QObject):
         if self.metadata_worker is not None and self.metadata_worker.isRunning():
             self.metadata_failed.emit("Já existe um processamento de URL em andamento.")
             return None
+        logger.info("Iniciando inspeção assíncrona | single=%s", single)
         self.metadata_worker = MetadataWorker(url, single=single, parent=self)
         self.metadata_worker.succeeded.connect(self.metadata_succeeded.emit)
         self.metadata_worker.failed.connect(self.metadata_failed.emit)
@@ -67,12 +66,14 @@ class DownloadController(QObject):
 
     def download(self, url, output_directory, audio_format="mp3", quality="128K", metadata=None):
         """Start a background download, optionally reusing inspected metadata."""
-        _trace(f"download() chamado | metadata_reutilizado={metadata is not None}")
+        logger.info("download() chamado | metadata_reutilizado=%s", metadata is not None)
         valid, error = self.validate(url, audio_format, quality)
         if not valid:
+            logger.warning("Download rejeitado na validação: %s", error)
             self.failed.emit(error)
             return None
         if self.worker is not None and self.worker.isRunning():
+            logger.warning("Download rejeitado: já existe um download em andamento")
             self.failed.emit("Já existe um download em andamento.")
             return None
         self.worker = DownloadWorker(
@@ -93,10 +94,11 @@ class DownloadController(QObject):
         return self.worker
 
     def cancel(self):
-        _trace("cancel() chamado")
+        logger.info("cancel() chamado")
         if self.worker is not None and self.worker.isRunning():
             self.worker.cancel()
             return True
+        logger.debug("cancel() ignorado: nenhum download em execução")
         return False
 
     def _on_succeeded(self, result):

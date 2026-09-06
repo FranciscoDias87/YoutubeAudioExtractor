@@ -1,4 +1,5 @@
 import os
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -24,6 +25,28 @@ def test_non_aac_keeps_requested_codec():
 
 def test_aac_has_no_yt_dlp_container_override():
     assert YouTubeService._postprocessor_args("aac") == {}
+
+
+def test_ffmpeg_aac_uses_utf8_with_replacement_on_windows():
+    with patch("app.services.youtube_service.subprocess.run") as run:
+        YouTubeService._ffmpeg_aac("input.m4a", "output.aac", "128K")
+
+    run.assert_called_once()
+    command = run.call_args.args[0]
+    kwargs = run.call_args.kwargs
+
+    assert command[:2] == ["ffmpeg", "-y"]
+    assert "-c:a" in command
+    assert command[command.index("-c:a") + 1] == "aac"
+    assert "-f" in command
+    assert command[command.index("-f") + 1] == "adts"
+    assert kwargs == {
+        "check": True,
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+    }
 
 
 def test_invalid_url_is_rejected(tmp_path):
@@ -59,3 +82,31 @@ def test_cancellation_callback_raises_download_cancelled():
 
 def test_percent_uses_downloaded_bytes():
     assert YouTubeService._percent({"downloaded_bytes": 25, "total_bytes": 100}) == 25
+
+
+def test_single_video_reuses_metadata_without_second_extract_info(tmp_path):
+    metadata = {
+        "_type": "video",
+        "id": "abc123",
+        "title": "Vídeo de teste",
+        "uploader": "Canal de teste",
+    }
+    fake_ydl = MagicMock()
+    fake_ydl.__enter__.return_value = fake_ydl
+    fake_ydl.__exit__.return_value = False
+
+    with patch("app.services.youtube_service.yt_dlp.YoutubeDL", return_value=fake_ydl) as ydl_cls:
+        with patch.object(YouTubeService, "_download_video", return_value={"success": True}) as download_video:
+            service = YouTubeService(str(tmp_path))
+            result = service.extract_audio(
+                "https://www.youtube.com/watch?v=abc123",
+                format="mp3",
+                quality="128K",
+                metadata=metadata,
+            )
+
+    assert result["success"] is True
+    fake_ydl.extract_info.assert_not_called()
+    ydl_cls.assert_not_called()
+    download_video.assert_called_once()
+    assert download_video.call_args.args[1] is metadata

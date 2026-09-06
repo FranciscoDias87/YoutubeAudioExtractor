@@ -1,4 +1,3 @@
-import os
 import urllib.parse
 
 from PyQt5.QtCore import Qt, pyqtSignal
@@ -22,6 +21,7 @@ class SingleVideoWindow(QMainWindow):
         super().__init__()
         self.output_directory = FileManager().base_directory
         self.controller = DownloadController(self)
+        self._video_metadata = None
         self.init_ui()
         self._connect_controller()
 
@@ -31,6 +31,8 @@ class SingleVideoWindow(QMainWindow):
         self.controller.failed.connect(self.download_error)
         self.controller.started.connect(self._download_started)
         self.controller.finished.connect(self._download_finished)
+        self.controller.metadata_succeeded.connect(self._metadata_loaded)
+        self.controller.metadata_failed.connect(self._metadata_error)
 
     def init_ui(self):
         self.setWindowTitle("YouTube Audio Extractor - Vídeo Único")
@@ -161,19 +163,29 @@ class SingleVideoWindow(QMainWindow):
         if not valid:
             QMessageBox.warning(self, "Aviso", error)
             return
-        self.log_message("Processando URL...")
-        try:
-            info = self.controller.inspect(url, single=True)
-            self.title_label.setText(info.get("title", "N/A"))
-            self.author_label.setText(info.get("uploader", "N/A"))
-            self.duration_label.setText(format_duration(info.get("duration")))
-            self.download_button.setEnabled(True)
-            self.log_message("URL processada com sucesso.")
-            self.url_input.setText(url)
-        except Exception as exc:
-            self.download_button.setEnabled(False)
-            QMessageBox.critical(self, "Erro", f"Não foi possível processar a URL:\n{exc}")
-            self.log_message(f"Erro: {exc}")
+
+        self._video_metadata = None
+        self.download_button.setEnabled(False)
+        self.process_url_button.setEnabled(False)
+        self.log_message("Processando URL em segundo plano...")
+        self.controller.inspect_async(url, single=True)
+
+    def _metadata_loaded(self, info):
+        self._video_metadata = info
+        self.title_label.setText(info.get("title", "N/A"))
+        self.author_label.setText(info.get("uploader", "N/A"))
+        self.duration_label.setText(format_duration(info.get("duration")))
+        self.url_input.setText(clean_video_url(self.url_input.text()))
+        self.download_button.setEnabled(True)
+        self.process_url_button.setEnabled(True)
+        self.log_message("URL processada com sucesso.")
+
+    def _metadata_error(self, error):
+        self._video_metadata = None
+        self.download_button.setEnabled(False)
+        self.process_url_button.setEnabled(True)
+        self.log_message(f"Erro ao processar URL: {error}")
+        QMessageBox.critical(self, "Erro", f"Não foi possível processar a URL:\n{error}")
 
     def browse_output_directory(self):
         directory = QFileDialog.getExistingDirectory(self, "Selecionar Diretório", self.output_directory)
@@ -189,6 +201,7 @@ class SingleVideoWindow(QMainWindow):
             output_directory=self.output_directory,
             audio_format=self.format_combo.currentText(),
             quality=self.quality_combo.currentText(),
+            metadata=self._video_metadata,
         )
 
     def _download_started(self):
@@ -200,7 +213,7 @@ class SingleVideoWindow(QMainWindow):
         self.progress_bar.setValue(0)
 
     def _download_finished(self):
-        self.download_button.setEnabled(bool(self.url_input.text().strip()))
+        self.download_button.setEnabled(bool(self._video_metadata))
         self.process_url_button.setEnabled(True)
         self.browse_button.setEnabled(True)
 

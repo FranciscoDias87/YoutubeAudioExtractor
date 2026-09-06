@@ -1,6 +1,9 @@
 import sys
+
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QObject, QTimer
+
+from app.logging_config import configure_logging
 from main_menu import MainMenuWindow
 from single_video_window import SingleVideoWindow
 from playlist_window import PlaylistWindow
@@ -66,6 +69,7 @@ class YouTubeAudioExtractorApp(QObject):
 
 def main():
     """Função principal da aplicação."""
+    configure_logging()
     app = QApplication(sys.argv)
     app.setApplicationName("YouTube Audio Extractor")
     app.setApplicationVersion("2.0")
